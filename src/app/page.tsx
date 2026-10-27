@@ -19,7 +19,7 @@ export default function LandingPage() {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.6, ease: "easeOut" }}
-          className="mx-auto max-w-7xl px-4 pb-12 pt-12 text-center sm:px-6 sm:pt-16"
+          className="mx-auto max-w-7xl px-4 pb-2 pt-12 text-center sm:px-6 sm:pt-16"
         >
           <h1 className="text-4xl font-bold leading-tight text-primary dark:text-white sm:text-5xl md:text-6xl">
             Want to redefine your room, before moving a single chair?
@@ -31,11 +31,12 @@ export default function LandingPage() {
 
         {/* ---------- Middle pale-blue card ---------- */}
         <motion.section
-          id="catalogue"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4, duration: 0.6, ease: "easeOut" }}
-          className="mx-auto mt-12 mb-16 max-w-7xl px-4 pt-12 sm:px-6"
+          id="catalog"
+          initial={{ opacity: 0, y: 24, scale: 0.98 }}
+          whileInView={{ opacity: 1, y: 0, scale: 1 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className="mx-auto mt-11 mb-16 max-w-7xl px-4 pt-11 sm:px-6"
         >
           <div className="card-surface grid gap-8 rounded-2xl p-6 sm:p-8 md:grid-cols-5">
             {/* Transform preview — 60% */}
@@ -86,7 +87,7 @@ export default function LandingPage() {
                 className="mt-4 grid grid-cols-3 gap-3"
                 initial="hidden"
                 whileInView="visible"
-                viewport={{ once: true }}
+                viewport={{ once: true, margin: "-100px" }}
                 variants={{
                   hidden: {},
                   visible: { transition: { staggerChildren: 0.1 } },
@@ -99,7 +100,7 @@ export default function LandingPage() {
                       hidden: { opacity: 0, y: 20, scale: 0.95 },
                       visible: { opacity: 1, y: 0, scale: 1 },
                     }}
-                    transition={{ duration: 0.45, ease: "easeOut" }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
                   >
                     <Link
                       href="/studio"

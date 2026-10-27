@@ -6,6 +6,7 @@ import {
   planToPrompt,
   MOCK_PLAN,
   type Plan,
+  type Operation,
 } from "@/lib/meta";
 
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export const maxDuration = 60;
  * Image failure is non-fatal (proposalUrl: null, client shows stylized preview).
  */
 export async function POST(req: Request) {
-  let body: { imageBase64?: string; text?: string };
+  let body: { imageBase64?: string; text?: string; operations?: Operation[]; isEdit?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -34,13 +35,25 @@ export async function POST(req: Request) {
   const imageBase64 = body.imageBase64 ?? null;
 
   try {
-    // Spark — with one retry if the JSON comes back malformed.
+    // Edited operations are authoritative; regular requests are planned by Spark.
     let plan: Plan;
-    try {
-      plan = await callSpark(text, imageBase64);
-    } catch (first) {
-      console.error("Spark attempt 1 failed:", first);
-      plan = await callSpark(text, imageBase64);
+    if (body.isEdit && Array.isArray(body.operations)) {
+      const operations = body.operations.filter((operation) =>
+        ["keep", "remove", "recolor", "reposition"].includes(operation.action) &&
+        typeof operation.target === "string" && operation.target.trim().length > 0
+      );
+      plan = {
+        goal: text,
+        constraints: [],
+        operations,
+      };
+    } else {
+      try {
+        plan = await callSpark(text, imageBase64);
+      } catch (first) {
+        console.error("Spark attempt 1 failed:", first);
+        plan = await callSpark(text, imageBase64);
+      }
     }
 
     const samResults = await callSam(plan.operations, imageBase64);

@@ -43,8 +43,21 @@ export const MOCK_PLAN: Plan = {
   ],
 };
 
-function fallbackSam(): SamResults {
-  return { connected: false, boxes: [], masks: [] };
+function fallbackSam(operations: Operation[]): SamResults {
+  const positions = [
+    { x: 120, y: 180, width: 260, height: 190 },
+    { x: 560, y: 160, width: 200, height: 220 },
+    { x: 360, y: 450, width: 230, height: 150 },
+    { x: 760, y: 390, width: 170, height: 190 },
+  ];
+  return {
+    connected: false,
+    boxes: operations.map((operation, index) => ({
+      label: operation.target,
+      ...positions[index % positions.length],
+    })),
+    masks: [],
+  };
 }
 
 /** Segment operation targets. If the optional SAM endpoint is unavailable, return labeled preview boxes. */
@@ -52,7 +65,7 @@ export async function callSam(
   operations: Operation[],
   imageBase64?: string | null
 ): Promise<SamResults> {
-  if (!KEY || !imageBase64) return fallbackSam();
+  if (!KEY || !imageBase64) return fallbackSam(operations);
 
   try {
     const response = await fetch(`${BASE}/sam`, {
@@ -67,7 +80,7 @@ export async function callSam(
         prompts: operations.slice(0, 4).map((operation) => operation.target),
       }),
     });
-    if (!response.ok) return fallbackSam();
+    if (!response.ok) return fallbackSam(operations);
 
     const data = await response.json();
     const rawBoxes = Array.isArray(data?.boxes) ? data.boxes : [];
@@ -91,7 +104,7 @@ export async function callSam(
     });
     return { connected: true, boxes, masks };
   } catch {
-    return fallbackSam();
+    return fallbackSam(operations);
   }
 }
 

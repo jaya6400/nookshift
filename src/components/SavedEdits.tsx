@@ -24,9 +24,9 @@ export function SavedEdits() {
   return (
     <motion.section
       id="saved-edits"
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.15 }}
+      initial={{ opacity: 0, y: 24, scale: 0.98 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
+      viewport={{ once: true, margin: "-100px" }}
       transition={{ duration: 0.5, ease: "easeOut" }}
       className="mx-auto mt-8 mb-16 max-w-7xl px-4 sm:px-6"
     >
@@ -42,7 +42,7 @@ export function SavedEdits() {
           className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
           initial="hidden"
           whileInView="visible"
-          viewport={{ once: true }}
+          viewport={{ once: true, margin: "-100px" }}
           variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.08 } } }}
         >
           {edits.map((edit, index) => (
@@ -50,8 +50,8 @@ export function SavedEdits() {
               key={`${edit.timestamp}-${index}`}
               type="button"
               onClick={() => setSelected(edit)}
-              variants={{ hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0 } }}
-              transition={{ duration: 0.35 }}
+              variants={{ hidden: { opacity: 0, y: 16, scale: 0.98 }, visible: { opacity: 1, y: 0, scale: 1 } }}
+              transition={{ duration: 0.5 }}
               className="overflow-hidden rounded-xl border border-surface2 bg-white text-left shadow-key transition hover:-translate-y-0.5 hover:shadow-key-lg dark:border-white/10 dark:bg-night2"
             >
               <div className="grid aspect-[16/7] grid-cols-2">

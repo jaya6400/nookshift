@@ -18,7 +18,11 @@ type DropzoneProps = {
 
 export function Dropzone({ image, samResults, dragging, fileInputRef, onFile, onDraggingChange, onShowSamples, onReplace }: DropzoneProps) {
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 24, scale: 0.98 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
+      viewport={{ once: true, margin: "-100px" }}
+      transition={{ duration: 0.5 }}
       className={cn("card-surface mt-4 flex min-h-64 items-center justify-center rounded-2xl p-4 transition-transform duration-200", dragging && "scale-[1.02]")}
       onDragOver={(event) => { event.preventDefault(); onDraggingChange(true); }}
       onDragLeave={() => onDraggingChange(false)}
@@ -50,6 +54,6 @@ export function Dropzone({ image, samResults, dragging, fileInputRef, onFile, on
         </div>
       )}
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => { onFile(event.target.files?.[0]); event.target.value = ""; }} />
-    </div>
+    </motion.div>
   );
 }

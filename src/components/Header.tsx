@@ -13,7 +13,7 @@ export function Header() {
         </Link>
         <nav className="flex items-center gap-3">
           <Link
-            href="/#catalogue"
+            href="/#catalog"
             className="rounded-full bg-surface px-4 py-1.5 text-sm font-bold text-primary shadow-key transition-all duration-150 hover:-translate-y-px hover:bg-surface2 dark:bg-night2 dark:text-slate-100"
           >
             Catalogue

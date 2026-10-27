@@ -32,11 +32,13 @@ type PlanResponse = {
 
 type SpeechResultEvent = {
   results: ArrayLike<ArrayLike<{ transcript: string }>>;
+  resultIndex: number;
 };
 
 type SpeechRecognitionLike = {
   lang: string;
   interimResults: boolean;
+  continuous: boolean;
   onresult: ((event: SpeechResultEvent) => void) | null;
   onerror: (() => void) | null;
   onend: (() => void) | null;
@@ -95,6 +97,8 @@ export default function StudioPage() {
   const [savedMessage, setSavedMessage] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechBaseRef = useRef("");
+  const speechActiveRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -134,7 +138,7 @@ export default function StudioPage() {
   };
 
   const toggleListening = () => {
-    if (listening) {
+    if (speechActiveRef.current) {
       recognitionRef.current?.stop();
       return;
     }
@@ -145,26 +149,35 @@ export default function StudioPage() {
       return;
     }
     const recognition = new Recognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
+    recognition.lang = "en-IN";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    speechBaseRef.current = idea.trim();
     recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript?.trim();
-      if (transcript) {
-        setIdea((current) => current ? `${current} ${transcript}` : transcript);
-        setSpeechMessage("Transcript added.");
+      let transcript = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        transcript += event.results[index]?.[0]?.transcript ?? "";
       }
+      const base = speechBaseRef.current;
+      setIdea(`${base}${base && transcript ? " " : ""}${transcript}`);
     };
     recognition.onerror = () => {
+      speechActiveRef.current = false;
       setListening(false);
       setSpeechMessage("Voice input could not start. Check microphone permission.");
     };
-    recognition.onend = () => setListening(false);
+    recognition.onend = () => {
+      speechActiveRef.current = false;
+      setListening(false);
+    };
     recognitionRef.current = recognition;
     setSpeechMessage("");
+    speechActiveRef.current = true;
     setListening(true);
     try {
       recognition.start();
     } catch {
+      speechActiveRef.current = false;
       setListening(false);
       setSpeechMessage("Voice input could not start. Check microphone permission.");
     }
@@ -234,6 +247,35 @@ export default function StudioPage() {
       ...current,
       plan: { ...current.plan, operations: current.plan.operations.filter((_, i) => i !== index) },
     } : current);
+  };
+
+  const regenerateEditedPlan = async () => {
+    if (!image || !result || phase === "loading") return;
+    const updatedOperations = result.plan.operations;
+    const editedPrompt = idea.trim() || result.plan.goal;
+    setStep("image");
+    setSavedMessage("");
+    try {
+      const imageBase64 = await toCompressedDataUrl(image);
+      const response = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64,
+          text: editedPrompt,
+          operations: updatedOperations,
+          isEdit: true,
+        }),
+      });
+      const data = (await response.json()) as PlanResponse;
+      if (!response.ok) throw new Error(data.error ?? "Edit regeneration failed");
+      setResult(data);
+      setEditingPlan(false);
+    } catch {
+      setSavedMessage("Could not regenerate this edit. Your operation changes are preserved.");
+    } finally {
+      setStep(null);
+    }
   };
 
   const logout = () => {
@@ -336,15 +378,20 @@ export default function StudioPage() {
             htmlFor="idea"
             className="mt-6 block text-sm font-bold text-primary dark:text-white"
           >
-            Type your idea or speak
+          
           </label>
           <div className="relative mt-2">
             <Input
               id="idea"
               value={idea}
               onChange={(e) => setIdea(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runMagic()}
-              placeholder="Type your idea or speak --"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (speechActiveRef.current) recognitionRef.current?.stop();
+                else runMagic();
+              }}
+              placeholder={listening ? "Press Enter or mic again to stop" : "Type your idea or speak ..."}
               className="rounded-full pr-11"
             />
             <button
@@ -356,7 +403,7 @@ export default function StudioPage() {
               <Mic className="size-4" />
             </button>
           </div>
-          {(listening || speechMessage) && <p className={cn("mt-1 text-xs", listening ? "text-red-600" : "text-slate-500")} role="status">{listening ? "Listening..." : speechMessage}</p>}
+          {(listening || speechMessage) && <p className={cn("mt-2 text-center text-xs", listening ? "text-red-600" : "text-slate-500")} role="status">{listening ? "Listening..." : speechMessage}</p>}
 
           <div className="mt-4 flex justify-center">
             {/* Glowing-outline magic button — framer-motion pulse */}
@@ -365,7 +412,7 @@ export default function StudioPage() {
               size="pill"
               onClick={runMagic}
               disabled={!image || phase === "loading"}
-              className="magic-glow"
+              className="magic-glow w-56"
             >
               {phase === "loading" ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -388,7 +435,7 @@ export default function StudioPage() {
 
           {/* Live result: banner + Spark checklist + real before/after */}
           {phase === "result" && image && plan && (
-            <motion.div initial={{ opacity: 0, y: 18, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.45 }} className="mt-6 space-y-4">
+            <motion.div initial={{ opacity: 0, y: 24, scale: 0.98 }} whileInView={{ opacity: 1, y: 0, scale: 1 }} viewport={{ once: true, margin: "-100px" }} transition={{ duration: 0.5 }} className="mt-6 space-y-4">
               {(!result?.proposalUrl || result?.error) && (
                 <p className="rounded-xl bg-surface2/60 px-3 py-2 text-xs font-bold text-primary dark:bg-white/5 dark:text-surface2">
                   {result?.error ??
@@ -400,8 +447,8 @@ export default function StudioPage() {
                   Plan — {plan.goal}
                 </p>
                 <div className="mt-2 flex items-center justify-between gap-3">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{result?.samResults?.connected ? `SAM connected · ${result.samResults.boxes.length} objects detected` : `Detected objects: ${result?.samResults?.boxes.length ?? 0}`}</p>
-                  <Button variant="ghost" size="sm" onClick={() => setEditingPlan((value) => !value)}>{editingPlan ? "Done editing" : "Edit plan"}</Button>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{result?.samResults?.connected ? `SAM connected · ${result.samResults.boxes.length} objects detected` : `Objects from plan: ${result?.samResults?.boxes.length ?? 0}`}</p>
+                  <Button variant="ghost" size="sm" disabled={step === "image"} onClick={() => editingPlan ? regenerateEditedPlan() : setEditingPlan(true)}>{step === "image" ? "Re-generating..." : editingPlan ? "Done editing" : "Edit plan"}</Button>
                 </div>
                 {plan.constraints.length > 0 && (
                   <p className="mt-0.5 text-xs italic text-slate-500 dark:text-slate-400">
@@ -439,16 +486,16 @@ export default function StudioPage() {
                   ))}
                 </ul>
                 {result?.samResults?.boxes.length ? <ul className="mt-2 flex flex-wrap gap-2" aria-label="Detected objects">
-                  {result.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">● {box.label}</li>)}
+                  {result.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">{box.label}</li>)}
                 </ul> : null}
               </div>
               <BeforeAfterSlider before={image} after={proposalSrc} afterLabel="Generated proposal" />
-              <div className="flex flex-wrap items-center gap-3">
-                <Button variant="soft" size="sm" onClick={persistEdit}>
+              <div className="flex flex-col items-center gap-2">
+                <Button variant="default" size="pill" onClick={persistEdit} className="magic-glow w-56 bg-primary text-white">
                   <Save className="size-3.5" />
                   Save Edit
                 </Button>
-                {savedMessage && <span className="text-xs text-slate-500" role="status">{savedMessage}</span>}
+                {savedMessage && <span className="text-center text-xs text-slate-500" role="status">{savedMessage}</span>}
               </div>
             </motion.div>
           )}
