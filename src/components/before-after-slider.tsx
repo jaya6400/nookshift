@@ -17,7 +17,7 @@ type Props = {
 export function BeforeAfterSlider({
   before,
   after,
-  afterLabel = "Generated proposal (mock — not to scale)",
+  afterLabel = "Generated proposal",
   className,
 }: Props) {
   const [pos, setPos] = useState(50);
@@ -59,7 +59,7 @@ export function BeforeAfterSlider({
         if (e.key === "ArrowRight") setPos((p) => Math.min(98, p + 4));
       }}
     >
-      {/* After (base layer, stylized to suggest the edit) */}
+      {/* Proposal image is shown beneath the original comparison layer. */}
       <img
         src={after}
         alt="After proposal"

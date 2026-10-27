@@ -1,7 +1,7 @@
 /**
  * Meta Model API client — server-only.
  * Keys come from process.env (set in .env.local), never from the client.
- * Every function falls back to a safe mock when MODEL_API_KEY is missing,
+ * Model functions use safe starter data when MODEL_API_KEY is missing,
  * so the UI works offline during development.
  *
  * Base: https://api.meta.ai/v1 (OpenAI-compatible)
@@ -27,7 +27,7 @@ export type Plan = {
 };
 
 export type SamResults = {
-  mock: boolean;
+  connected: boolean;
   boxes: { label: string; x: number; y: number; width: number; height: number }[];
   masks: { label: string; size: [number, number]; counts: number[] }[];
 };
@@ -43,63 +43,56 @@ export const MOCK_PLAN: Plan = {
   ],
 };
 
-/** Transparent preview shape until the provider's SAM endpoint contract is available. */
-export function callSam(operations: Operation[]): SamResults {
-  const targets = operations.slice(0, 4);
-  const positions = [
-    { x: 120, y: 200, width: 280, height: 190 },
-    { x: 520, y: 150, width: 180, height: 240 },
-    { x: 720, y: 340, width: 190, height: 160 },
-    { x: 390, y: 460, width: 240, height: 120 },
-  ];
+function fallbackSam(): SamResults {
+  return { connected: false, boxes: [], masks: [] };
+}
 
-  const encodeRectangle = (
-    box: { x: number; y: number; width: number; height: number },
-    size: [number, number]
-  ) => {
-    const [height, width] = size;
-    const xStart = Math.max(0, Math.floor(box.x));
-    const xEnd = Math.min(width, Math.ceil(box.x + box.width));
-    const yStart = Math.max(0, Math.floor(box.y));
-    const yEnd = Math.min(height, Math.ceil(box.y + box.height));
-    const counts: number[] = [];
-    let value = 0;
-    let runLength = 0;
-    const append = (nextValue: number, length: number) => {
-      if (length <= 0) return;
-      if (nextValue === value) runLength += length;
-      else {
-        counts.push(runLength);
-        value = nextValue;
-        runLength = length;
-      }
-    };
+/** Segment operation targets. If the optional SAM endpoint is unavailable, return labeled preview boxes. */
+export async function callSam(
+  operations: Operation[],
+  imageBase64?: string | null
+): Promise<SamResults> {
+  if (!KEY || !imageBase64) return fallbackSam();
 
-    for (let x = 0; x < width; x += 1) {
-      if (x >= xStart && x < xEnd) {
-        append(0, yStart);
-        append(1, yEnd - yStart);
-        append(0, height - yEnd);
-      } else {
-        append(0, height);
-      }
-    }
-    counts.push(runLength);
-    return counts;
-  };
+  try {
+    const response = await fetch(`${BASE}/sam`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: SAM_MODEL,
+        image: imageBase64,
+        prompts: operations.slice(0, 4).map((operation) => operation.target),
+      }),
+    });
+    if (!response.ok) return fallbackSam();
 
-  return {
-    mock: true,
-    boxes: targets.map((operation, index) => ({
-      label: operation.target,
-      ...positions[index],
-    })),
-    masks: targets.map((operation, index) => ({
-      label: operation.target,
-      size: [768, 1024],
-      counts: encodeRectangle(positions[index], [768, 1024]),
-    })),
-  };
+    const data = await response.json();
+    const rawBoxes = Array.isArray(data?.boxes) ? data.boxes : [];
+    const boxes = rawBoxes.flatMap((box: Record<string, unknown>, index: number) => {
+      const bounds = Array.isArray(box.box) ? box.box : null;
+      const x = Number(box.x ?? bounds?.[0]);
+      const y = Number(box.y ?? bounds?.[1]);
+      const width = Number(box.width ?? (bounds ? Number(bounds[2]) - x : NaN));
+      const height = Number(box.height ?? (bounds ? Number(bounds[3]) - y : NaN));
+      if (![x, y, width, height].every(Number.isFinite)) return [];
+      return [{ label: String(box.label ?? box.prompt ?? operations[index]?.target ?? `Object ${index + 1}`), x, y, width, height }];
+    });
+    const rawMasks = Array.isArray(data?.masks) ? data.masks : [];
+    const masks = rawMasks.flatMap((mask: Record<string, unknown>, index: number) => {
+      const size = Array.isArray(mask.size) && mask.size.length === 2
+        ? [Number(mask.size[0]), Number(mask.size[1])] as [number, number]
+        : [768, 1024] as [number, number];
+      const counts = Array.isArray(mask.counts) ? mask.counts.map(Number) : [];
+      if (!counts.length) return [];
+      return [{ label: String(mask.label ?? operations[index]?.target ?? `Object ${index + 1}`), size, counts }];
+    });
+    return { connected: true, boxes, masks };
+  } catch {
+    return fallbackSam();
+  }
 }
 
 const SPARK_SYSTEM = [

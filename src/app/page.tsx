@@ -5,6 +5,7 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { ArrowRight, Play } from "lucide-react";
 import { Header } from "@/components/Header";
+import { SavedEdits } from "@/components/SavedEdits";
 import { SAMPLES } from "@/lib/samples";
 
 export default function LandingPage() {
@@ -18,7 +19,7 @@ export default function LandingPage() {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.6, ease: "easeOut" }}
-          className="mx-auto max-w-7xl px-4 pb-6 pt-12 text-center sm:px-6 sm:pt-16"
+          className="mx-auto max-w-7xl px-4 pb-12 pt-12 text-center sm:px-6 sm:pt-16"
         >
           <h1 className="text-4xl font-bold leading-tight text-primary dark:text-white sm:text-5xl md:text-6xl">
             Want to redefine your room, before moving a single chair?
@@ -34,7 +35,7 @@ export default function LandingPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4, duration: 0.6, ease: "easeOut" }}
-          className="mx-auto max-w-7xl px-4 pb-24 sm:px-6"
+          className="mx-auto mt-12 mb-16 max-w-7xl px-4 pt-12 sm:px-6"
         >
           <div className="card-surface grid gap-8 rounded-2xl p-6 sm:p-8 md:grid-cols-5">
             {/* Transform preview — 60% */}
@@ -132,6 +133,7 @@ export default function LandingPage() {
             </div>
           </div>
         </motion.section>
+        <SavedEdits />
       </main>
     </div>
   );

@@ -14,7 +14,7 @@ export const maxDuration = 60;
 /**
  * POST /api/plan
  * Body: { imageBase64?: string, text: string }
- * Returns: { plan: Plan, proposalUrl: string | null, mock: boolean, error?: string }
+ * Returns: { plan: Plan, samResults: SamResults, proposalUrl: string | null, error?: string }
  *
  * Flow: Spark reasons -> plan JSON -> Image renders the grounded proposal.
  * Image failure is non-fatal (proposalUrl: null, client shows stylized preview).
@@ -43,8 +43,7 @@ export async function POST(req: Request) {
       plan = await callSpark(text, imageBase64);
     }
 
-    // SAM preview is explicitly marked mock until its provider contract is configured.
-    const samResults = callSam(plan.operations);
+    const samResults = await callSam(plan.operations, imageBase64);
 
     // Image — failure must not kill the plan.
     let proposalUrl: string | null = null;
@@ -58,16 +57,14 @@ export async function POST(req: Request) {
       plan,
       samResults,
       proposalUrl,
-      mock: !process.env.MODEL_API_KEY,
     });
   } catch (err) {
     console.error("/api/plan failed:", err);
     return NextResponse.json({
       plan: MOCK_PLAN,
-      samResults: callSam(MOCK_PLAN.operations),
+      samResults: await callSam(MOCK_PLAN.operations, imageBase64),
       proposalUrl: null,
-      mock: true,
-      error: "Live models unavailable — showing mock plan.",
+      error: "Planning service unavailable; showing a starter plan.",
     });
   }
 }

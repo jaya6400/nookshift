@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, ImagePlus, Lightbulb, Loader2, Minus, Sparkles, Wand2 } from "lucide-react";
+import { motion } from "framer-motion";
+import { ArrowLeft, Check, ImagePlus, Loader2, Mic, Minus, Save, Wand2 } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NameModal } from "@/components/name-modal";
@@ -16,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { SAMPLES } from "@/lib/samples";
 import type { Operation, Plan, SamResults } from "@/lib/meta";
+import { saveEdit } from "@/lib/saved-edits";
 import { cn } from "@/lib/utils";
 
 type Phase = "idle" | "loading" | "result";
@@ -25,8 +27,26 @@ type PlanResponse = {
   plan: Plan;
   samResults: SamResults | null;
   proposalUrl: string | null;
-  mock: boolean;
   error?: string;
+};
+
+type SpeechResultEvent = {
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+};
+
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  onresult: ((event: SpeechResultEvent) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
 };
 
 /** Compress any image source to 1024px webp data URL (<2MB). */
@@ -70,8 +90,11 @@ export default function StudioPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [editingPlan, setEditingPlan] = useState(false);
-  const [highlightSamples, setHighlightSamples] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [speechMessage, setSpeechMessage] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   useEffect(() => {
     try {
@@ -85,6 +108,8 @@ export default function StudioPage() {
       setModalOpen(true);
     }
   }, []);
+
+  useEffect(() => () => recognitionRef.current?.stop(), []);
 
   const onFile = useCallback(async (file: File | undefined) => {
     if (!file) return;
@@ -105,15 +130,43 @@ export default function StudioPage() {
   }, []);
 
   const showSamples = () => {
-    setHighlightSamples(true);
-    window.setTimeout(() => setHighlightSamples(false), 2000);
-    if (window.matchMedia("(min-width: 768px)").matches) {
-      if (collapsed) setCollapsed(false);
-      window.setTimeout(() => {
-        document.getElementById("sample-spaces")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, collapsed ? 200 : 0);
-    } else {
-      setGalleryOpen(true);
+    setGalleryOpen(true);
+  };
+
+  const toggleListening = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const speechApi = window as SpeechWindow;
+    const Recognition = speechApi.SpeechRecognition ?? speechApi.webkitSpeechRecognition;
+    if (!Recognition) {
+      setSpeechMessage("Voice input is not supported in this browser.");
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (transcript) {
+        setIdea((current) => current ? `${current} ${transcript}` : transcript);
+        setSpeechMessage("Transcript added.");
+      }
+    };
+    recognition.onerror = () => {
+      setListening(false);
+      setSpeechMessage("Voice input could not start. Check microphone permission.");
+    };
+    recognition.onend = () => setListening(false);
+    recognitionRef.current = recognition;
+    setSpeechMessage("");
+    setListening(true);
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+      setSpeechMessage("Voice input could not start. Check microphone permission.");
     }
   };
 
@@ -148,8 +201,7 @@ export default function StudioPage() {
         },
         samResults: null,
         proposalUrl: null,
-        mock: true,
-        error: "Network error — showing mock plan.",
+        error: "Couldn't reach the planning service. A starter plan is shown.",
       };
     }
     setResult(data);
@@ -191,6 +243,22 @@ export default function StudioPage() {
     setSettingsOpen(false);
   };
 
+  const persistEdit = () => {
+    if (!image || !plan) return;
+    try {
+      saveEdit({
+        originalUrl: image,
+        proposalUrl: result?.proposalUrl ?? image,
+        plan,
+        timestamp: new Date().toISOString(),
+      });
+      window.dispatchEvent(new Event("nookshift:saved-edits"));
+      setSavedMessage("Edit saved.");
+    } catch {
+      setSavedMessage("Could not save this edit. Browser storage may be full.");
+    }
+  };
+
   const displayName = name ?? "there";
   const initial = displayName.slice(0, 1).toUpperCase();
   const plan = result?.plan ?? null;
@@ -199,7 +267,7 @@ export default function StudioPage() {
   return (
     <div className="min-h-screen pb-20 md:pb-0">
       {/* Top bar */}
-      <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-slate-100 bg-white/80 px-4 backdrop-blur dark:border-white/5 dark:bg-night/80">
+      <motion.header initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-slate-100 bg-white/80 px-4 backdrop-blur dark:border-white/5 dark:bg-night/80">
         <Link
           href="/"
           className="inline-flex items-center gap-2 text-sm font-bold text-primary dark:text-slate-200"
@@ -208,7 +276,7 @@ export default function StudioPage() {
           <Logo />
         </Link>
         <ThemeToggle />
-      </header>
+      </motion.header>
 
       <NameModal
         open={modalOpen}
@@ -220,13 +288,17 @@ export default function StudioPage() {
       />
 
       {/* ---------- 20 / 60 / 20 workspace ---------- */}
-      <div className="mx-auto flex max-w-[1600px] gap-4 p-4">
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.12 } } }}
+        className="mx-auto flex max-w-[1600px] gap-4 p-4"
+      >
         <Sidebar
           name={displayName}
           initial={initial}
           collapsed={collapsed}
           canEditPlan={phase === "result" && Boolean(plan)}
-          highlightSamples={highlightSamples}
           draftName={draftName}
           onDraftNameChange={setDraftName}
           onSaveName={() => saveName(draftName)}
@@ -236,19 +308,15 @@ export default function StudioPage() {
             setEditingPlan(true);
             document.getElementById("plan-checklist")?.scrollIntoView({ behavior: "smooth", block: "center" });
           }}
-          onPickSample={pickSample}
           onShowSamples={showSamples}
         />
 
         {/* ===== Center canvas ===== */}
-        <section className="min-w-0 flex-1 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 sm:p-6">
+        <motion.section variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0 } }} transition={{ duration: 0.45 }} className="min-w-0 flex-1 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 sm:p-6">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-primary dark:text-white">
               Workspace Canvas
             </h2>
-            <span className="rounded-full bg-surface px-2.5 py-1 text-[11px] font-bold text-primary dark:bg-night dark:text-surface2">
-              60%
-            </span>
           </div>
 
           {/* Dropzone / preview — scales up while dragging */}
@@ -279,8 +347,16 @@ export default function StudioPage() {
               placeholder="Type your idea or speak --"
               className="rounded-full pr-11"
             />
-            <Lightbulb className="pointer-events-none absolute right-4 top-1/2 size-4 -translate-y-1/2 text-primary dark:text-surface2" />
+            <button
+              type="button"
+              onClick={toggleListening}
+              aria-label={listening ? "Stop voice input" : "Start voice input"}
+              className={cn("absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-primary hover:bg-surface dark:text-surface2", listening && "animate-pulse text-red-600")}
+            >
+              <Mic className="size-4" />
+            </button>
           </div>
+          {(listening || speechMessage) && <p className={cn("mt-1 text-xs", listening ? "text-red-600" : "text-slate-500")} role="status">{listening ? "Listening..." : speechMessage}</p>}
 
           <div className="mt-4 flex justify-center">
             {/* Glowing-outline magic button — framer-motion pulse */}
@@ -303,20 +379,20 @@ export default function StudioPage() {
 
           {/* Loading skeleton with live step label */}
           {phase === "loading" && (
-            <div className="mt-6 animate-pulse space-y-3" aria-label="Analyzing">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-6 animate-pulse space-y-3" aria-label="Analyzing">
               <div className="h-4 w-2/5 rounded bg-surface2 dark:bg-white/10" />
               <div className="h-4 w-3/5 rounded bg-surface2 dark:bg-white/10" />
               <div className="h-28 w-full rounded-2xl bg-surface2/60 dark:bg-white/5" />
-            </div>
+            </motion.div>
           )}
 
           {/* Live result: banner + Spark checklist + real before/after */}
           {phase === "result" && image && plan && (
-            <div className="mt-6 animate-fade-up space-y-4">
-              {(result?.mock || !result?.proposalUrl || result?.error) && (
+            <motion.div initial={{ opacity: 0, y: 18, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.45 }} className="mt-6 space-y-4">
+              {(!result?.proposalUrl || result?.error) && (
                 <p className="rounded-xl bg-surface2/60 px-3 py-2 text-xs font-bold text-primary dark:bg-white/5 dark:text-surface2">
                   {result?.error ??
-                    "Live image unavailable — showing stylized preview. Not to scale."}
+                    "Proposal unavailable; showing the original photo."}
                 </p>
               )}
               <div id="plan-checklist">
@@ -324,7 +400,7 @@ export default function StudioPage() {
                   Plan — {plan.goal}
                 </p>
                 <div className="mt-2 flex items-center justify-between gap-3">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Detected objects: {result?.samResults?.boxes.length ?? 0}{result?.samResults?.mock ? " (preview data; live SAM not connected)" : ""}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{result?.samResults?.connected ? `SAM connected · ${result.samResults.boxes.length} objects detected` : `Detected objects: ${result?.samResults?.boxes.length ?? 0}`}</p>
                   <Button variant="ghost" size="sm" onClick={() => setEditingPlan((value) => !value)}>{editingPlan ? "Done editing" : "Edit plan"}</Button>
                 </div>
                 {plan.constraints.length > 0 && (
@@ -366,17 +442,20 @@ export default function StudioPage() {
                   {result.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">● {box.label}</li>)}
                 </ul> : null}
               </div>
-              <BeforeAfterSlider before={image} after={proposalSrc} />
-              <Button variant="soft" size="sm" onClick={() => setPhase("idle")}>
-                <Sparkles className="size-3.5" />
-                Refine idea
-              </Button>
-            </div>
+              <BeforeAfterSlider before={image} after={proposalSrc} afterLabel="Generated proposal" />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="soft" size="sm" onClick={persistEdit}>
+                  <Save className="size-3.5" />
+                  Save Edit
+                </Button>
+                {savedMessage && <span className="text-xs text-slate-500" role="status">{savedMessage}</span>}
+              </div>
+            </motion.div>
           )}
-        </section>
+        </motion.section>
 
         {/* ===== Right panel (desktop) — Quick Tips only, no profile ===== */}
-        <aside className="hidden w-[20%] min-w-60 flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 lg:flex">
+        <motion.aside variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0 } }} transition={{ duration: 0.45, delay: 0.1 }} className="hidden w-[20%] min-w-60 flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 lg:flex">
           <div>
             <h2 className="text-base font-bold text-primary dark:text-white">
               Quick Tips
@@ -396,8 +475,8 @@ export default function StudioPage() {
               )}
             </div>
           </div>
-        </aside>
-      </div>
+        </motion.aside>
+      </motion.div>
 
       {/* ---------- Mobile bottom nav ---------- */}
       <BottomNav
@@ -432,7 +511,7 @@ export default function StudioPage() {
         </div>
         <p className="mt-3 flex items-center gap-2 text-xs text-slate-400">
           <ImagePlus className="size-3.5" />
-          Or drag &amp; drop your own photo onto the canvas.
+          Drag from your gallery.
         </p>
       </Dialog>
         <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>

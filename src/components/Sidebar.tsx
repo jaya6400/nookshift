@@ -1,9 +1,9 @@
 "use client";
 
 import { Images, PencilRuler } from "lucide-react";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ProfileBadge } from "@/components/ProfileBadge";
-import { SAMPLES } from "@/lib/samples";
 import { cn } from "@/lib/utils";
 
 type SidebarProps = {
@@ -11,14 +11,12 @@ type SidebarProps = {
   initial: string;
   collapsed: boolean;
   canEditPlan: boolean;
-  highlightSamples: boolean;
   draftName: string;
   onDraftNameChange: (value: string) => void;
   onSaveName: () => void;
   onLogout: () => void;
   onToggleCollapsed: () => void;
   onEditPlan: () => void;
-  onPickSample: (src: string) => void;
   onShowSamples: () => void;
 };
 
@@ -27,18 +25,16 @@ export function Sidebar({
   initial,
   collapsed,
   canEditPlan,
-  highlightSamples,
   draftName,
   onDraftNameChange,
   onSaveName,
   onLogout,
   onToggleCollapsed,
   onEditPlan,
-  onPickSample,
   onShowSamples,
 }: SidebarProps) {
   return (
-    <aside className={cn(
+    <motion.aside variants={{ hidden: { opacity: 0, x: -14 }, visible: { opacity: 1, x: 0 } }} transition={{ duration: 0.4 }} className={cn(
       "relative hidden min-h-[720px] flex-col rounded-2xl border border-slate-100 bg-white p-4 pb-24 shadow-key transition-all duration-200 dark:border-white/5 dark:bg-night2 md:flex",
       collapsed ? "w-16 items-center" : "w-[20%] min-w-52"
     )}>
@@ -53,22 +49,8 @@ export function Sidebar({
       </div>
 
       {!collapsed && <div className="mt-5 flex flex-1 flex-col gap-3">
-        <Button variant="outline" onClick={onShowSamples}><Images className="size-4" />Get Sample Images</Button>
+        <Button id="get-samples-btn" variant="outline" onClick={onShowSamples}><Images className="size-4" />Get Samples</Button>
         <Button variant="ghost" onClick={onEditPlan} disabled={!canEditPlan}><PencilRuler className="size-4" />Edit Space</Button>
-        <section
-          id="sample-spaces"
-          className={cn("mt-2 rounded-xl border border-transparent p-2 transition-colors duration-300", highlightSamples && "border-2 border-link bg-surface")}
-        >
-          <h3 className="mb-2 text-xs font-bold text-primary dark:text-white">Sample Spaces</h3>
-          <div className="grid grid-cols-3 gap-1.5">
-            {SAMPLES.map((sample) => (
-              <button key={sample.id} onClick={() => onPickSample(sample.src)} title={sample.label} className="aspect-square overflow-hidden rounded-lg">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={sample.src} alt={sample.label} className="h-full w-full object-cover" />
-              </button>
-            ))}
-          </div>
-        </section>
       </div>}
 
       <ProfileBadge
@@ -80,6 +62,6 @@ export function Sidebar({
         onSave={onSaveName}
         onLogout={onLogout}
       />
-    </aside>
+    </motion.aside>
   );
 }

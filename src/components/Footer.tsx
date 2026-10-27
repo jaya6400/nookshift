@@ -12,7 +12,7 @@ export function Footer() {
   if (pathname.startsWith("/studio")) return null;
 
   return (
-    <footer className="mt-16 flex h-14 items-center justify-center border-t border-[#DBEAFE] bg-[#EFF6FF] px-4 py-4 dark:border-white/10 dark:bg-night2">
+    <footer className="mt-8 flex h-14 items-center justify-center border-t border-[#DBEAFE] bg-[#EFF6FF] px-4 py-4 dark:border-white/10 dark:bg-night2">
       <p className="text-[13px] text-slate-500 dark:text-slate-300">
         Built by Jaya Dubey (Indian Dev)
         <span className="mx-2 text-slate-300 dark:text-slate-600">•</span>
