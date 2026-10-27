@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-white font-serif text-slate-900 antialiased dark:bg-night dark:text-slate-100;
+  }
+  ::selection {
+    @apply bg-surface2 text-primary;
+  }
+}
+
+@layer components {
+  /* Keyboard-like feel: rounded 12px, soft shadow, hover lift, active press */
+  .btn-key {
+    @apply rounded-xl shadow-key transition-all duration-150 hover:-translate-y-px hover:shadow-key-lg active:translate-y-px;
+  }
+  .card-surface {
+    @apply rounded-2xl bg-surface dark:bg-night2;
+  }
+  .input-key {
+    @apply h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition-shadow placeholder:text-slate-400 focus:ring-2 focus:ring-ring dark:border-white/10 dark:bg-night dark:text-slate-100;
+  }
+}
