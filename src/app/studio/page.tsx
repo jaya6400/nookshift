@@ -2,43 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import {
-  ArrowLeft,
-  Check,
-  CloudUpload,
-  ImagePlus,
-  Images,
-  Lightbulb,
-  Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PencilRuler,
-  SlidersHorizontal,
-  Sparkles,
-  UserRound,
-  Wand2,
-} from "lucide-react";
+import { ArrowLeft, Check, ImagePlus, Lightbulb, Loader2, Minus, Sparkles, Wand2 } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NameModal } from "@/components/name-modal";
 import { BeforeAfterSlider } from "@/components/before-after-slider";
 import { BottomNav } from "@/components/bottom-nav";
 import { FloorPlan } from "@/components/floor-plan";
+import { Sidebar } from "@/components/Sidebar";
+import { Dropzone } from "@/components/Dropzone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { SAMPLES } from "@/lib/samples";
-import type { Plan } from "@/lib/meta";
+import type { Operation, Plan, SamResults } from "@/lib/meta";
 import { cn } from "@/lib/utils";
-
-const MotionButton = motion(Button);
 
 type Phase = "idle" | "loading" | "result";
 type Step = "spark" | "image";
 
 type PlanResponse = {
   plan: Plan;
+  samResults: SamResults | null;
   proposalUrl: string | null;
   mock: boolean;
   error?: string;
@@ -84,12 +69,17 @@ export default function StudioPage() {
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [editingPlan, setEditingPlan] = useState(false);
+  const [highlightSamples, setHighlightSamples] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem("nookshift_user");
-      if (saved) setName(saved);
+      if (saved) {
+        setName(saved);
+        setDraftName(saved);
+      }
       else setModalOpen(true);
     } catch {
       setModalOpen(true);
@@ -113,6 +103,19 @@ export default function StudioPage() {
     setResult(null);
     setImage(await toCompressedDataUrl(src));
   }, []);
+
+  const showSamples = () => {
+    setHighlightSamples(true);
+    window.setTimeout(() => setHighlightSamples(false), 2000);
+    if (window.matchMedia("(min-width: 768px)").matches) {
+      if (collapsed) setCollapsed(false);
+      window.setTimeout(() => {
+        document.getElementById("sample-spaces")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, collapsed ? 200 : 0);
+    } else {
+      setGalleryOpen(true);
+    }
+  };
 
   const runMagic = async () => {
     if (!image || phase === "loading") return;
@@ -143,12 +146,15 @@ export default function StudioPage() {
             { action: "reposition", target: "desk", value: "near the window" },
           ],
         },
+        samResults: null,
         proposalUrl: null,
         mock: true,
         error: "Network error — showing mock plan.",
       };
     }
     setResult(data);
+    setDraftName(name ?? "");
+    setEditingPlan(false);
     setStep(null);
     setPhase("result");
   };
@@ -160,6 +166,28 @@ export default function StudioPage() {
       localStorage.setItem("nookshift_user", trimmed);
     } catch {}
     setName(trimmed);
+    setDraftName(trimmed);
+    setSettingsOpen(false);
+  };
+
+  const updateOperation = (index: number, patch: Partial<Operation>) => {
+    setResult((current) => current ? {
+      ...current,
+      plan: { ...current.plan, operations: current.plan.operations.map((operation, i) => i === index ? { ...operation, ...patch } : operation) },
+    } : current);
+  };
+
+  const removeOperation = (index: number) => {
+    setResult((current) => current ? {
+      ...current,
+      plan: { ...current.plan, operations: current.plan.operations.filter((_, i) => i !== index) },
+    } : current);
+  };
+
+  const logout = () => {
+    try { localStorage.removeItem("nookshift_user"); } catch {}
+    setName(null);
+    setDraftName("");
     setSettingsOpen(false);
   };
 
@@ -184,102 +212,33 @@ export default function StudioPage() {
 
       <NameModal
         open={modalOpen}
-        onSaved={(n) => {
-          setName(n);
+        onSaved={(savedName) => {
+          setName(savedName);
+          setDraftName(savedName);
           setModalOpen(false);
         }}
       />
 
       {/* ---------- 20 / 60 / 20 workspace ---------- */}
       <div className="mx-auto flex max-w-[1600px] gap-4 p-4">
-        {/* ===== Left sidebar (desktop) — profile lives ONLY here, bottom-left ===== */}
-        <aside
-          className={cn(
-            "relative hidden flex-col rounded-2xl border border-slate-100 bg-white p-4 pb-24 shadow-key transition-all duration-200 dark:border-white/5 dark:bg-night2 md:flex",
-            collapsed ? "w-16 items-center" : "w-[20%] min-w-52"
-          )}
-        >
-          <div className="flex items-center justify-between gap-2">
-            {!collapsed && (
-              <div>
-                <h2 className="text-base font-bold text-primary dark:text-white">
-                  Your Space
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-300">
-                  Hello, {displayName}
-                </p>
-              </div>
-            )}
-            <button
-              onClick={() => setCollapsed((c) => !c)}
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className="rounded-lg p-1.5 text-primary transition-colors hover:bg-surface dark:text-slate-200 dark:hover:bg-night"
-            >
-              {collapsed ? (
-                <PanelLeftOpen className="size-4" />
-              ) : (
-                <PanelLeftClose className="size-4" />
-              )}
-            </button>
-          </div>
-
-          {!collapsed && (
-            <div className="mt-5 flex flex-1 flex-col gap-3">
-              <Button variant="outline" onClick={() => setGalleryOpen(true)}>
-                <Images className="size-4" />
-                Get Sample Images
-              </Button>
-              <Button variant="ghost" onClick={() => setSettingsOpen(true)}>
-                <PencilRuler className="size-4" />
-                Edit Space
-              </Button>
-
-              <div className="mt-auto space-y-2 border-t border-slate-100 pt-4 dark:border-white/5">
-                <button
-                  onClick={() => setSettingsOpen(true)}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-bold text-primary transition-colors hover:bg-surface dark:text-slate-100 dark:hover:bg-night"
-                >
-                  <SlidersHorizontal className="size-4" />
-                  Settings
-                </button>
-                <div className="px-2 py-1.5">
-                  <p className="flex items-center gap-2 text-sm font-bold text-primary dark:text-slate-100">
-                    <UserRound className="size-4" />
-                    Profile
-                  </p>
-                  <Input
-                    className="mt-2 h-9 text-xs"
-                    defaultValue={name ?? ""}
-                    placeholder="Enter your name before workspace"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter")
-                        saveName((e.target as HTMLInputElement).value);
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Single profile badge — bottom-left of sidebar only */}
-          <div className="absolute bottom-4 left-4 flex items-center gap-2.5">
-            <span className="relative flex size-11 items-center justify-center rounded-full bg-gradient-to-br from-primary to-ring text-sm font-bold text-white shadow-key">
-              {initial}
-              {/* Lime accent: 2px status dot */}
-              <span className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full bg-accent ring-2 ring-white dark:ring-night2" />
-            </span>
-            {!collapsed && (
-              <div>
-                <p className="text-sm font-bold leading-tight text-primary dark:text-white">
-                  {displayName}
-                </p>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                  Workspace architect
-                </p>
-              </div>
-            )}
-          </div>
-        </aside>
+        <Sidebar
+          name={displayName}
+          initial={initial}
+          collapsed={collapsed}
+          canEditPlan={phase === "result" && Boolean(plan)}
+          highlightSamples={highlightSamples}
+          draftName={draftName}
+          onDraftNameChange={setDraftName}
+          onSaveName={() => saveName(draftName)}
+          onLogout={logout}
+          onToggleCollapsed={() => setCollapsed((value) => !value)}
+          onEditPlan={() => {
+            setEditingPlan(true);
+            document.getElementById("plan-checklist")?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}
+          onPickSample={pickSample}
+          onShowSamples={showSamples}
+        />
 
         {/* ===== Center canvas ===== */}
         <section className="min-w-0 flex-1 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 sm:p-6">
@@ -293,62 +252,16 @@ export default function StudioPage() {
           </div>
 
           {/* Dropzone / preview — scales up while dragging */}
-          <div
-            className={cn(
-              "card-surface mt-4 flex min-h-64 items-center justify-center rounded-2xl p-4 transition-transform duration-200",
-              dragging && "scale-[1.02]"
-            )}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              onFile(e.dataTransfer.files?.[0]);
-            }}
-          >
-            {image ? (
-              <div className="relative w-full max-w-lg overflow-hidden rounded-xl shadow-key">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={image} alt="Your space" className="block w-full" />
-                <button
-                  onClick={() => {
-                    setImage(null);
-                    setPhase("idle");
-                    setResult(null);
-                  }}
-                  className="absolute right-2 top-2 rounded-full bg-black/55 px-3 py-1 text-xs font-bold text-white"
-                >
-                  Replace
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="flex w-full max-w-lg flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-link/50 bg-surface2/30 px-6 py-10 text-center transition-colors hover:border-link dark:bg-white/5"
-              >
-                <CloudUpload className="size-8 text-link" />
-                <span className="text-sm font-bold text-primary dark:text-white">
-                  Drop your space image or video
-                </span>
-                <span className="text-sm text-link">
-                  Not have? Get one from Samples -&gt;
-                </span>
-              </button>
-            )}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                onFile(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-          </div>
+          <Dropzone
+            image={image}
+            samResults={result?.samResults ?? null}
+            dragging={dragging}
+            fileInputRef={fileRef}
+            onFile={onFile}
+            onDraggingChange={setDragging}
+            onShowSamples={showSamples}
+            onReplace={() => { setImage(null); setPhase("idle"); setResult(null); }}
+          />
 
           {/* Idea input */}
           <label
@@ -369,23 +282,14 @@ export default function StudioPage() {
             <Lightbulb className="pointer-events-none absolute right-4 top-1/2 size-4 -translate-y-1/2 text-primary dark:text-surface2" />
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="mt-4 flex justify-center">
             {/* Glowing-outline magic button — framer-motion pulse */}
-            <MotionButton
+            <Button
               variant="magic"
               size="pill"
               onClick={runMagic}
               disabled={!image || phase === "loading"}
-              whileHover={{ y: -1 }}
-              whileTap={{ y: 1 }}
-              animate={{
-                boxShadow: [
-                  "0 0 0 rgba(241,255,94,0)",
-                  "0 0 20px rgba(241,255,94,0.8)",
-                  "0 0 0 rgba(241,255,94,0)",
-                ],
-              }}
-              transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+              className="magic-glow"
             >
               {phase === "loading" ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -393,20 +297,9 @@ export default function StudioPage() {
                 <Wand2 className="size-4" />
               )}
               Talk to See the Magic
-            </MotionButton>
-            <p className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
-              {phase === "loading" ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  {step === "spark"
-                    ? "Understanding goal… (Spark)"
-                    : "Rendering preview… (Image)"}
-                </>
-              ) : (
-                "Glowing outline indicates studio magic."
-              )}
-            </p>
+            </Button>
           </div>
+          {phase === "loading" && <p className="mt-2 flex justify-center gap-1.5 text-xs text-slate-400" role="status"><Loader2 className="size-3.5 animate-spin" />{step === "spark" ? "Understanding goal... (Spark)" : "Rendering preview... (Image)"}</p>}
 
           {/* Loading skeleton with live step label */}
           {phase === "loading" && (
@@ -426,10 +319,14 @@ export default function StudioPage() {
                     "Live image unavailable — showing stylized preview. Not to scale."}
                 </p>
               )}
-              <div>
+              <div id="plan-checklist">
                 <p className="text-sm font-bold text-primary dark:text-white">
                   Plan — {plan.goal}
                 </p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Detected objects: {result?.samResults?.boxes.length ?? 0}{result?.samResults?.mock ? " (preview data; live SAM not connected)" : ""}</p>
+                  <Button variant="ghost" size="sm" onClick={() => setEditingPlan((value) => !value)}>{editingPlan ? "Done editing" : "Edit plan"}</Button>
+                </div>
                 {plan.constraints.length > 0 && (
                   <p className="mt-0.5 text-xs italic text-slate-500 dark:text-slate-400">
                     {plan.constraints.join(" · ")}
@@ -439,7 +336,7 @@ export default function StudioPage() {
                   {plan.operations.map((op, i) => (
                     <li
                       key={i}
-                      className="flex items-center gap-2 rounded-lg bg-surface px-3 py-2 text-sm dark:bg-night"
+                      className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-3 py-2 text-sm dark:bg-night"
                     >
                       <span
                         className={cn(
@@ -451,16 +348,23 @@ export default function StudioPage() {
                       >
                         <Check className="size-3" />
                       </span>
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-ring dark:text-link">
-                        {op.action}
-                      </span>
-                      <span className="text-slate-700 dark:text-slate-200">
-                        {op.target}
-                        {op.value ? ` → ${op.value}` : ""}
-                      </span>
+                      {editingPlan ? <>
+                        <select aria-label={`Operation ${i + 1} action`} value={op.action} onChange={(event) => updateOperation(i, { action: event.target.value as Operation["action"] })} className="rounded border border-slate-200 bg-white px-1 py-1 text-xs dark:border-white/10 dark:bg-night2">
+                          {["keep", "remove", "recolor", "reposition"].map((action) => <option key={action} value={action}>{action}</option>)}
+                        </select>
+                        <Input aria-label={`Operation ${i + 1} target`} value={op.target} onChange={(event) => updateOperation(i, { target: event.target.value })} className="h-8 min-w-24 flex-1 text-xs" />
+                        <Input aria-label={`Operation ${i + 1} value`} value={op.value ?? ""} onChange={(event) => updateOperation(i, { value: event.target.value || undefined })} placeholder="Value (optional)" className="h-8 min-w-24 flex-1 text-xs" />
+                        <button aria-label={`Remove operation ${i + 1}`} onClick={() => removeOperation(i)} className="rounded p-1 text-slate-500 hover:bg-white dark:hover:bg-night2"><Minus className="size-4" /></button>
+                      </> : <>
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-ring dark:text-link">{op.action}</span>
+                        <span className="text-slate-700 dark:text-slate-200">{op.target}{op.value ? ` → ${op.value}` : ""}</span>
+                      </>}
                     </li>
                   ))}
                 </ul>
+                {result?.samResults?.boxes.length ? <ul className="mt-2 flex flex-wrap gap-2" aria-label="Detected objects">
+                  {result.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">● {box.label}</li>)}
+                </ul> : null}
               </div>
               <BeforeAfterSlider before={image} after={proposalSrc} />
               <Button variant="soft" size="sm" onClick={() => setPhase("idle")}>
@@ -531,37 +435,17 @@ export default function StudioPage() {
           Or drag &amp; drop your own photo onto the canvas.
         </p>
       </Dialog>
+        <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>Your name is stored only in this browser.</DialogDescription>
+          <form className="mt-4 space-y-3" onSubmit={(event) => { event.preventDefault(); saveName(draftName); }}>
+            <label htmlFor="mobile-settings-name" className="text-sm font-bold text-primary dark:text-white">Profile name</label>
+            <Input id="mobile-settings-name" value={draftName} onChange={(event) => setDraftName(event.target.value)} placeholder="Enter your name" />
+            <Button type="submit" className="w-full">Save</Button>
+            <Button type="button" variant="ghost" className="w-full" onClick={logout}>Clear local profile</Button>
+          </form>
+        </Dialog>
 
-      {/* ---------- Settings dialog ---------- */}
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogTitle>Settings</DialogTitle>
-        <DialogDescription>
-          Your name shows up across the workspace. No account, no sign-in.
-        </DialogDescription>
-        <form
-          className="mt-4 space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            saveName(draftName);
-          }}
-        >
-          <label
-            htmlFor="settings-name"
-            className="text-sm font-bold text-primary dark:text-white"
-          >
-            Name
-          </label>
-          <Input
-            id="settings-name"
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            placeholder="Enter your name before workspace"
-          />
-          <Button type="submit" className="w-full">
-            Save
-          </Button>
-        </form>
-      </Dialog>
     </div>
   );
 }

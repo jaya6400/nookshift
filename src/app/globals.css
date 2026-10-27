@@ -25,4 +25,12 @@
   .input-key {
     @apply h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition-shadow placeholder:text-slate-400 focus:ring-2 focus:ring-ring dark:border-white/10 dark:bg-night dark:text-slate-100;
   }
+  .magic-glow {
+    animation: magic-glow 2.5s ease-in-out infinite;
+  }
+}
+
+@keyframes magic-glow {
+  0%, 100% { box-shadow: 0 0 0 rgba(241, 255, 94, 0); }
+  50% { box-shadow: 0 0 20px rgba(241, 255, 94, 0.8); }
 }

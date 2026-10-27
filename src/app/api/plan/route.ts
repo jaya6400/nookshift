@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   callSpark,
   callImage,
+  callSam,
   planToPrompt,
   MOCK_PLAN,
   type Plan,
@@ -42,6 +43,9 @@ export async function POST(req: Request) {
       plan = await callSpark(text, imageBase64);
     }
 
+    // SAM preview is explicitly marked mock until its provider contract is configured.
+    const samResults = callSam(plan.operations);
+
     // Image — failure must not kill the plan.
     let proposalUrl: string | null = null;
     try {
@@ -52,6 +56,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       plan,
+      samResults,
       proposalUrl,
       mock: !process.env.MODEL_API_KEY,
     });
@@ -59,6 +64,7 @@ export async function POST(req: Request) {
     console.error("/api/plan failed:", err);
     return NextResponse.json({
       plan: MOCK_PLAN,
+      samResults: callSam(MOCK_PLAN.operations),
       proposalUrl: null,
       mock: true,
       error: "Live models unavailable — showing mock plan.",

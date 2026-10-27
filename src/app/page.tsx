@@ -14,10 +14,10 @@ export default function LandingPage() {
 
       <main className="flex-1">
         {/* ---------- Hero (fade-in) ---------- */}
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
+          transition={{ delay: 0.1, duration: 0.6, ease: "easeOut" }}
           className="mx-auto max-w-7xl px-4 pb-6 pt-12 text-center sm:px-6 sm:pt-16"
         >
           <h1 className="text-4xl font-bold leading-tight text-primary dark:text-white sm:text-5xl md:text-6xl">
@@ -26,10 +26,16 @@ export default function LandingPage() {
           <p className="mx-auto mt-4 max-w-xl text-lg italic text-slate-600 dark:text-slate-300">
             NookShift is here for you. See First, Analyze the Feel, Then Change
           </p>
-        </motion.section>
+        </motion.div>
 
         {/* ---------- Middle pale-blue card ---------- */}
-        <section id="catalogue" className="mx-auto max-w-7xl px-4 sm:px-6">
+        <motion.section
+          id="catalogue"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4, duration: 0.6, ease: "easeOut" }}
+          className="mx-auto max-w-7xl px-4 pb-24 sm:px-6"
+        >
           <div className="card-surface grid gap-8 rounded-2xl p-6 sm:p-8 md:grid-cols-5">
             {/* Transform preview — 60% */}
             <div className="md:col-span-3">
@@ -75,26 +81,43 @@ export default function LandingPage() {
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                 Real renter rooms, pick one to test
               </p>
-              <div className="mt-4 grid grid-cols-3 gap-3">
+              <motion.div
+                className="mt-4 grid grid-cols-3 gap-3"
+                initial="hidden"
+                whileInView="visible"
+                viewport={{ once: true }}
+                variants={{
+                  hidden: {},
+                  visible: { transition: { staggerChildren: 0.1 } },
+                }}
+              >
                 {SAMPLES.map((s) => (
-                  <Link
+                  <motion.div
                     key={s.id}
-                    href="/studio"
-                    className="group relative aspect-square overflow-hidden rounded-xl shadow-key transition-all duration-150 hover:-translate-y-px hover:shadow-key-lg"
-                    title={s.hint}
+                    variants={{
+                      hidden: { opacity: 0, y: 20, scale: 0.95 },
+                      visible: { opacity: 1, y: 0, scale: 1 },
+                    }}
+                    transition={{ duration: 0.45, ease: "easeOut" }}
                   >
-                    <Image
-                      src={s.src}
-                      alt={s.label}
-                      fill
-                      className="object-cover transition-transform duration-300 group-hover:scale-105"
-                    />
-                    <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-primary/80 to-transparent px-2 pb-1.5 pt-4 text-[10px] font-bold leading-tight text-white">
-                      {s.label}
-                    </span>
-                  </Link>
+                    <Link
+                      href="/studio"
+                      className="group relative block aspect-square overflow-hidden rounded-xl shadow-key transition-all duration-150 hover:-translate-y-px hover:shadow-key-lg"
+                      title={s.hint}
+                    >
+                      <Image
+                        src={s.src}
+                        alt={s.label}
+                        fill
+                        className="object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                      <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-primary/80 to-transparent px-2 pb-1.5 pt-4 text-[10px] font-bold leading-tight text-white">
+                        {s.label}
+                      </span>
+                    </Link>
+                  </motion.div>
                 ))}
-              </div>
+              </motion.div>
 
               <Link
                 href="/studio"
@@ -108,7 +131,7 @@ export default function LandingPage() {
               </p>
             </div>
           </div>
-        </section>
+        </motion.section>
       </main>
     </div>
   );

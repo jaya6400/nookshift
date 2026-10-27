@@ -12,6 +12,7 @@ const KEY = process.env.MODEL_API_KEY;
 
 export const SPARK_MODEL = "muse-spark-1.3";
 export const IMAGE_MODEL = "muse-image-1.0";
+export const SAM_MODEL = "sam-3.1";
 
 export type Operation = {
   action: "keep" | "remove" | "recolor" | "reposition";
@@ -25,6 +26,12 @@ export type Plan = {
   operations: Operation[];
 };
 
+export type SamResults = {
+  mock: boolean;
+  boxes: { label: string; x: number; y: number; width: number; height: number }[];
+  masks: { label: string; size: [number, number]; counts: number[] }[];
+};
+
 export const MOCK_PLAN: Plan = {
   goal: "Make the room feel open, calm and work-friendly",
   constraints: ["renter-friendly, no drilling", "keep existing furniture", "low budget"],
@@ -35,6 +42,65 @@ export const MOCK_PLAN: Plan = {
     { action: "keep", target: "bookshelf" },
   ],
 };
+
+/** Transparent preview shape until the provider's SAM endpoint contract is available. */
+export function callSam(operations: Operation[]): SamResults {
+  const targets = operations.slice(0, 4);
+  const positions = [
+    { x: 120, y: 200, width: 280, height: 190 },
+    { x: 520, y: 150, width: 180, height: 240 },
+    { x: 720, y: 340, width: 190, height: 160 },
+    { x: 390, y: 460, width: 240, height: 120 },
+  ];
+
+  const encodeRectangle = (
+    box: { x: number; y: number; width: number; height: number },
+    size: [number, number]
+  ) => {
+    const [height, width] = size;
+    const xStart = Math.max(0, Math.floor(box.x));
+    const xEnd = Math.min(width, Math.ceil(box.x + box.width));
+    const yStart = Math.max(0, Math.floor(box.y));
+    const yEnd = Math.min(height, Math.ceil(box.y + box.height));
+    const counts: number[] = [];
+    let value = 0;
+    let runLength = 0;
+    const append = (nextValue: number, length: number) => {
+      if (length <= 0) return;
+      if (nextValue === value) runLength += length;
+      else {
+        counts.push(runLength);
+        value = nextValue;
+        runLength = length;
+      }
+    };
+
+    for (let x = 0; x < width; x += 1) {
+      if (x >= xStart && x < xEnd) {
+        append(0, yStart);
+        append(1, yEnd - yStart);
+        append(0, height - yEnd);
+      } else {
+        append(0, height);
+      }
+    }
+    counts.push(runLength);
+    return counts;
+  };
+
+  return {
+    mock: true,
+    boxes: targets.map((operation, index) => ({
+      label: operation.target,
+      ...positions[index],
+    })),
+    masks: targets.map((operation, index) => ({
+      label: operation.target,
+      size: [768, 1024],
+      counts: encodeRectangle(positions[index], [768, 1024]),
+    })),
+  };
+}
 
 const SPARK_SYSTEM = [
   "You are NookShift, an interior-redesign planner for renters.",
