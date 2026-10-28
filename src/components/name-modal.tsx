@@ -51,7 +51,7 @@ export function NameModal({
             setName(e.target.value);
             setError("");
           }}
-          placeholder="e.g. Jaya"
+          placeholder="e.g. Clara"
         />
         {error && <p className="text-xs text-red-500">{error}</p>}
         <Button type="submit" className="w-full">

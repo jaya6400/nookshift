@@ -124,17 +124,42 @@ Layout: Desktop 20% left sidebar | 60% center canvas | 20% right profile. Mobile
 - Log model IDs in README for judges.
 - Cost estimates: full loop ~$0.0132 (Spark $0.001 + SAM $0.0025 + Image $0.01). Mock until credits.
 
-## 9. Submission Checklist for Kimi Output
+## 9. Implementation Status Checklist
 
-- [ ] Gentium Book Plus enforced via link + tailwind
-- [ ] Footer is full-width centered, not side card
-- [ ] No sign-in, name modal localStorage
-- [ ] Dropzone, input, Magic button with glow #F1FF5E
-- [ ] Light/Dark toggle functional
-- [ ] Samples clickable -> loads into canvas
-- [ ] Before/after slider
-- [ ] /design/New_Screen_1.png committed to repo
-- [ ] README mentions Meta models and topology
+Status reflects the code audit, the supplied localhost screenshots, and the live API results reported for `/api/plan` (HTTP 200; Spark completed in about 40 seconds and Image in about 6 seconds for a sofa-removal test). Screenshot evidence is visual only; it does not independently identify which model produced an image.
+
+| Feature | Implemented in source | Live verified |
+| --- | --- | --- |
+| Photo upload and client-side compression to 1024px WebP | [x] Implemented; under-2MB target is not guaranteed | [ ] Compression size not verified in screenshots or reported API logs |
+| Video upload | [ ] Intentionally excluded from this MVP; image-only upload is supported. WebXR/VR remains an optional stretch item, not a prerequisite. | [ ] Not applicable; intentionally excluded |
+| `muse-spark-1.3` plan generation with structured operations | [x] Wired through `/api/plan`; mock plan is used when the API key is absent | [x] User-reported `/api/plan` HTTP 200 logs and sofa-removal test |
+| `sam-3.1` operation-target requests and box parsing | [x] Request and response parsing are present; fallback boxes are synthetic when SAM is unavailable | [x] Labeled box/target overlay is visible in Screenshot (124); this does not prove live SAM produced it |
+| SAM pixel-mask rendering | [ ] Masks may be parsed as RLE, but pixel masks are not rendered; the UI currently shows labeled box-position markers, not masks. Needs implementation. | [ ] Pixel masks are not visible |
+| `muse-image-1.0` proposal generation/edit | [x] Wired to image edits using the uploaded photo | [x] User-reported live API verification; generated proposal shown with original in Screenshot (125) |
+| Before/after comparison slider | [x] Implemented | [x] Visible in Screenshot (125) |
+| Spark checklist linked to SAM masks with interactive checkboxes | [ ] Missing. Plan rows can be edited, but are not checkboxes linked to the mask/box markers. | [ ] Not demonstrated |
+| Edit regeneration after changing operations | [x] Edited operations can be resubmitted through `/api/plan` | [ ] No separate live regeneration result identified in the supplied evidence |
+| Save Edit and Saved Edits landing state | [x] Local storage save and landing display are implemented | [x] Save/Edit flow shown in Screenshot (126); Saved Edits empty state shown in Screenshot (127) |
+| Browser speech recognition | [x] `SpeechRecognition`/`webkitSpeechRecognition` is implemented with `interimResults`; interim transcription behavior needs improvement/verification | [ ] Microphone interaction is not shown in the supplied screenshots |
+| `muse-voice-transcribe-1.0` transcription | [ ] Not implemented; current voice input uses the browser API | [ ] Not verified |
+| Gentium Book Plus, no-auth/name-modal flow, and `#1C0770` primary color | [x] Implemented in the app and styling | [x] Branding and light workspace are visible in supplied screenshots; no-auth behavior is source-confirmed |
+| Full-width footer with “Built by Indie Dev” linked to LinkedIn | [ ] Current footer is a full-width banner but uses “Built by Jaya Dubey (Indian Dev)” and a plain LinkedIn URL; change the copy so “Indie Dev” is the link | [ ] Current footer appearance is visible in Screenshot (127), but requested copy is not present |
+| Landing catalogue carousel | [ ] Current implementation is three static cards. The original architecture specifies three cards, not a carousel; carousel is a planned addition. | [ ] Not implemented or verified |
+| Help and Upvote features | [ ] Not in the original architecture or current implementation; planned additions | [ ] Not implemented or verified |
+| Cost guard of five generations per session | [ ] Not implemented | [ ] Not verified |
+| Optional WebXR preview | [ ] Not implemented; optional stretch item and excluded from the current MVP | [ ] Not applicable to current MVP |
+| Centered global landing footer | [x] Full-width centered footer component is implemented | [x] Visible in Screenshot (127); requested Indie Dev link copy remains pending above |
+| Landing sample cards and Studio sample picker | [x] Three static landing cards and a Studio picker are implemented; Studio picker loads a selected sample. Landing cards currently navigate to Studio without selecting that specific sample. | [x] Sample room visible in Screenshot (124); specific landing-card selection behavior not verified |
+| Design wireframe asset in repository | [x] Design assets are present under `public/design/` | [ ] Git commit status is not established by this audit |
+
+### Screenshot Evidence
+
+- Screenshot (124): Studio room image and labeled target marker.
+- Screenshot (125): Plan and generated-proposal comparison with before/after slider.
+- Screenshot (126): Studio result and Save Edit control.
+- Screenshot (127): Landing Saved Edits empty state and current centered footer.
+
+The architecture checklist is the status source of truth. README summarizes these findings without duplicating this checklist.
 
 ## 10. Reference Files to Give Kimi
 

@@ -3,7 +3,7 @@ import { Footer } from "@/components/Footer";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NookShift — See First, Analyze the Feel, Then Change",
+  title: "NookShift - Redesign your space",
   description:
     "Redesign your rented space without designer cost. Upload a photo, describe the change, get a grounded visual proposal.",
 };
