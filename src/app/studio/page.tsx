@@ -137,6 +137,13 @@ export default function StudioPage() {
     setImage(await toCompressedDataUrl(src));
   }, []);
 
+  useEffect(() => {
+    const sampleId = new URLSearchParams(window.location.search).get("sample");
+    const sample = SAMPLES.find((entry) => entry.id === sampleId && entry.isRealRoom);
+    const overviewImage = sample?.images?.[0];
+    if (overviewImage) void pickSample(overviewImage);
+  }, [pickSample]);
+
   const showSamples = () => {
     setGalleryOpen(true);
   };

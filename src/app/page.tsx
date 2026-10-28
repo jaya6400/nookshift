@@ -103,9 +103,9 @@ export default function LandingPage() {
                     transition={{ duration: 0.5, ease: "easeOut" }}
                   >
                     <Link
-                      href="/studio"
+                      href={s.isRealRoom ? `/studio?sample=${s.id}` : "/studio"}
                       className="group relative block aspect-square overflow-hidden rounded-xl shadow-key transition-all duration-150 hover:-translate-y-px hover:shadow-key-lg"
-                      title={s.hint}
+                      title={s.description ?? s.hint}
                     >
                       <Image
                         src={s.src}
@@ -113,8 +113,13 @@ export default function LandingPage() {
                         fill
                         className="object-cover transition-transform duration-300 group-hover:scale-105"
                       />
+                      {s.isRealRoom && (
+                        <span className="absolute left-1.5 top-1.5 rounded-full bg-white/95 px-2 py-0.5 text-[9px] font-bold text-primary shadow-key">
+                          Real Room
+                        </span>
+                      )}
                       <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-primary/80 to-transparent px-2 pb-1.5 pt-4 text-[10px] font-bold leading-tight text-white">
-                        {s.label}
+                        {s.title ?? s.label}
                       </span>
                     </Link>
                   </motion.div>
@@ -128,7 +133,7 @@ export default function LandingPage() {
                 Try Workspace
                 <ArrowRight className="size-4" />
               </Link>
-              <p className="mt-3 text-sm text-slate-500 dark:text-slate-300">
+              <p className="mt-3 text-sm text-center text-slate-500 dark:text-slate-300">
                 Your designs will be saved here. For your comeback.
               </p>
             </div>

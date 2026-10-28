@@ -3,6 +3,10 @@ export type Sample = {
   src: string;
   label: string;
   hint: string;
+  title?: string;
+  description?: string;
+  images?: string[];
+  isRealRoom?: boolean;
 };
 
 export const SAMPLES: Sample[] = [
@@ -23,5 +27,19 @@ export const SAMPLES: Sample[] = [
     src: "/samples/room-3.png",
     label: "Work corner near window",
     hint: "Test desk reposition & plants",
+  },
+  {
+    id: "real-room-india-1bhk",
+    title: "My Real Room - India 1BHK",
+    description: "Real cluttered 1BHK in India — test real-world rearrangement",
+    images: [
+      "/samples/real-room/full-mandir-hall-room.jpg",
+      "/samples/real-room/mandir-area.jpg",
+      "/samples/real-room/two-seater.jpg",
+    ],
+    src: "/samples/real-room/full-mandir-hall-room.jpg",
+    label: "My Real Room - India 1BHK",
+    hint: "Real cluttered 1BHK in India — test real-world rearrangement",
+    isRealRoom: true,
   },
 ];
