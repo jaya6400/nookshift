@@ -1,29 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronUp, LogOut, SlidersHorizontal, UserRound } from "lucide-react";
+import { ChevronUp, CircleHelp, SlidersHorizontal, UserRound } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 type ProfileBadgeProps = {
   name: string;
   initial: string;
   collapsed: boolean;
-  draftName: string;
-  onDraftNameChange: (value: string) => void;
-  onSave: () => void;
-  onLogout: () => void;
+  onEditProfile: () => void;
+  onShowHelp: () => void;
 };
 
 export function ProfileBadge({
   name,
   initial,
   collapsed,
-  draftName,
-  onDraftNameChange,
-  onSave,
-  onLogout,
+  onEditProfile,
+  onShowHelp,
 }: ProfileBadgeProps) {
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -40,35 +34,33 @@ export function ProfileBadge({
           Settings
         </button>
         {settingsOpen && (
-          <form
-            className="mt-2 space-y-2 border-t border-slate-100 pt-3 dark:border-white/10"
-            onSubmit={(event) => {
-              event.preventDefault();
-              onSave();
-              setOpen(false);
-            }}
-          >
-            <label htmlFor="sidebar-name" className="text-xs font-bold text-primary dark:text-white">
-              Profile name
-            </label>
-            <Input
-              id="sidebar-name"
-              value={draftName}
-              onChange={(event) => onDraftNameChange(event.target.value)}
-              placeholder="Enter your name"
-              className="h-9 text-xs"
-            />
-            <Button type="submit" size="sm" className="w-full">Save</Button>
-          </form>
+          <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 dark:border-white/10">
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(false);
+                setOpen(false);
+                onEditProfile();
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-primary hover:bg-surface dark:text-white dark:hover:bg-night2"
+            >
+              <UserRound className="size-4" />
+              Profile
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(false);
+                setOpen(false);
+                onShowHelp();
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-primary hover:bg-surface dark:text-white dark:hover:bg-night2"
+            >
+              <CircleHelp className="size-4" />
+              Help
+            </button>
+          </div>
         )}
-        <button
-          type="button"
-          onClick={onLogout}
-          className="mt-2 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-slate-500 hover:bg-surface dark:text-slate-300 dark:hover:bg-night2"
-        >
-          <LogOut className="size-3.5" />
-          Clear local profile
-        </button>
       </CollapsibleContent>
       <CollapsibleTrigger asChild>
         <button

@@ -5,7 +5,7 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { ArrowRight, Play } from "lucide-react";
 import { Header } from "@/components/Header";
-import { SavedEdits } from "@/components/SavedEdits";
+import { SavedEditsCarousel } from "@/components/SavedEditsCarousel";
 import { SAMPLES } from "@/lib/samples";
 
 export default function LandingPage() {
@@ -134,7 +134,7 @@ export default function LandingPage() {
             </div>
           </div>
         </motion.section>
-        <SavedEdits />
+        <SavedEditsCarousel />
       </main>
     </div>
   );

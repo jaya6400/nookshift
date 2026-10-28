@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, ImagePlus, Loader2, Mic, Minus, Save, Wand2 } from "lucide-react";
+import { ArrowLeft, Check, CircleHelp, ImagePlus, Loader2, Mic, Minus, Save, UserRound, Wand2 } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NameModal } from "@/components/name-modal";
@@ -11,6 +11,8 @@ import { BeforeAfterSlider } from "@/components/before-after-slider";
 import { BottomNav } from "@/components/bottom-nav";
 import { FloorPlan } from "@/components/floor-plan";
 import { Sidebar } from "@/components/Sidebar";
+import { HelpModal } from "@/components/HelpModal";
+import { ProfileEditModal } from "@/components/ProfileEditModal";
 import { Dropzone } from "@/components/Dropzone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -90,6 +92,8 @@ export default function StudioPage() {
   const [dragging, setDragging] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [editingPlan, setEditingPlan] = useState(false);
   const [listening, setListening] = useState(false);
@@ -232,7 +236,7 @@ export default function StudioPage() {
     } catch {}
     setName(trimmed);
     setDraftName(trimmed);
-    setSettingsOpen(false);
+    setProfileOpen(false);
   };
 
   const updateOperation = (index: number, patch: Partial<Operation>) => {
@@ -283,6 +287,7 @@ export default function StudioPage() {
     setName(null);
     setDraftName("");
     setSettingsOpen(false);
+    setProfileOpen(false);
   };
 
   const persistEdit = () => {
@@ -328,6 +333,15 @@ export default function StudioPage() {
           setModalOpen(false);
         }}
       />
+      <ProfileEditModal
+        open={profileOpen}
+        onOpenChange={setProfileOpen}
+        draftName={draftName}
+        onDraftNameChange={setDraftName}
+        onSave={() => saveName(draftName)}
+        onLogout={logout}
+      />
+      <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
 
       {/* ---------- 20 / 60 / 20 workspace ---------- */}
       <motion.div
@@ -341,10 +355,11 @@ export default function StudioPage() {
           initial={initial}
           collapsed={collapsed}
           canEditPlan={phase === "result" && Boolean(plan)}
-          draftName={draftName}
-          onDraftNameChange={setDraftName}
-          onSaveName={() => saveName(draftName)}
-          onLogout={logout}
+          onEditProfile={() => {
+            setDraftName(name ?? "");
+            setProfileOpen(true);
+          }}
+          onShowHelp={() => setHelpOpen(true)}
           onToggleCollapsed={() => setCollapsed((value) => !value)}
           onEditPlan={() => {
             setEditingPlan(true);
@@ -561,16 +576,35 @@ export default function StudioPage() {
           Drag from your gallery.
         </p>
       </Dialog>
-        <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-          <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Your name is stored only in this browser.</DialogDescription>
-          <form className="mt-4 space-y-3" onSubmit={(event) => { event.preventDefault(); saveName(draftName); }}>
-            <label htmlFor="mobile-settings-name" className="text-sm font-bold text-primary dark:text-white">Profile name</label>
-            <Input id="mobile-settings-name" value={draftName} onChange={(event) => setDraftName(event.target.value)} placeholder="Enter your name" />
-            <Button type="submit" className="w-full">Save</Button>
-            <Button type="button" variant="ghost" className="w-full" onClick={logout}>Clear local profile</Button>
-          </form>
-        </Dialog>
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogTitle>Settings</DialogTitle>
+        <DialogDescription>Manage your profile or get help.</DialogDescription>
+        <div className="mt-4 space-y-2">
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            onClick={() => {
+              setSettingsOpen(false);
+              setDraftName(name ?? "");
+              setProfileOpen(true);
+            }}
+          >
+            <UserRound className="size-4" />
+            Profile
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            onClick={() => {
+              setSettingsOpen(false);
+              setHelpOpen(true);
+            }}
+          >
+            <CircleHelp className="size-4" />
+            Help
+          </Button>
+        </div>
+      </Dialog>
 
     </div>
   );

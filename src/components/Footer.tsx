@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 /**
@@ -12,18 +11,17 @@ export function Footer() {
   if (pathname.startsWith("/studio")) return null;
 
   return (
-    <footer className="mt-8 flex h-14 items-center justify-center border-t border-[#DBEAFE] bg-[#EFF6FF] px-4 py-4 dark:border-white/10 dark:bg-night2">
-      <p className="text-[13px] text-slate-500 dark:text-slate-300">
-        Built by Jaya Dubey (Indian Dev)
-        <span className="mx-2 text-slate-300 dark:text-slate-600">•</span>
-        <Link
-          href="https://linkedin.com/in/jaya-dubey"
+    <footer className="mt-8 flex items-center justify-center border-t border-[#DBEAFE] bg-white px-4 py-6 dark:border-white/10 dark:bg-night">
+      <p className="text-sm text-muted-foreground text-slate-500 dark:text-slate-300">
+        Built by{" "}
+        <a
+          href="https://www.linkedin.com/in/jaya6400"
           target="_blank"
-          rel="noreferrer"
-          className="font-bold text-link hover:underline"
+          rel="noopener noreferrer"
+          className="underline hover:text-[#1C0770]"
         >
-          linkedin.com/in/jaya-dubey
-        </Link>
+          Indie Dev
+        </a>
       </p>
     </footer>
   );

@@ -11,10 +11,8 @@ type SidebarProps = {
   initial: string;
   collapsed: boolean;
   canEditPlan: boolean;
-  draftName: string;
-  onDraftNameChange: (value: string) => void;
-  onSaveName: () => void;
-  onLogout: () => void;
+  onEditProfile: () => void;
+  onShowHelp: () => void;
   onToggleCollapsed: () => void;
   onEditPlan: () => void;
   onShowSamples: () => void;
@@ -25,10 +23,8 @@ export function Sidebar({
   initial,
   collapsed,
   canEditPlan,
-  draftName,
-  onDraftNameChange,
-  onSaveName,
-  onLogout,
+  onEditProfile,
+  onShowHelp,
   onToggleCollapsed,
   onEditPlan,
   onShowSamples,
@@ -57,10 +53,8 @@ export function Sidebar({
         name={name}
         initial={initial}
         collapsed={collapsed}
-        draftName={draftName}
-        onDraftNameChange={onDraftNameChange}
-        onSave={onSaveName}
-        onLogout={onLogout}
+        onEditProfile={onEditProfile}
+        onShowHelp={onShowHelp}
       />
     </motion.aside>
   );
