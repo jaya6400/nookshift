@@ -32,6 +32,20 @@ export type SamResults = {
   masks: { label: string; size: [number, number]; counts: number[] }[];
 };
 
+export type BatchRequest = {
+  images: string[];
+  text: string;
+  existingPlan?: Plan;
+  index?: number;
+};
+
+export type PerViewResult = {
+  index: number;
+  proposalUrl: string | null;
+  samResults: SamResults | null;
+  error?: string;
+};
+
 export const MOCK_PLAN: Plan = {
   goal: "Make the room feel open, calm and work-friendly",
   constraints: ["renter-friendly, no drilling", "keep existing furniture", "low budget"],

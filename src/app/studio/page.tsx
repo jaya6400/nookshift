@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { ArrowLeft, Check, CircleHelp, ImagePlus, Loader2, Mic, Minus, Save, UserRound, Wand2 } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -16,21 +16,19 @@ import { ProfileEditModal } from "@/components/ProfileEditModal";
 import { Dropzone } from "@/components/Dropzone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { SAMPLES } from "@/lib/samples";
-import type { Operation, Plan, SamResults } from "@/lib/meta";
+import type { Operation, Plan, PerViewResult, SamResults } from "@/lib/meta";
 import { saveEdit } from "@/lib/saved-edits";
 import { cn } from "@/lib/utils";
 
 type Phase = "idle" | "loading" | "result";
 type Step = "spark" | "image";
 
-type PlanResponse = {
-  plan: Plan;
-  samResults: SamResults | null;
-  proposalUrl: string | null;
-  error?: string;
-};
+type ViewStatus = "idle" | "loading" | "success" | "error";
+type StudioView = { id: string; image: string; label: string; status: ViewStatus; result?: PerViewResult };
+type BatchResponse = { plan: Plan; results: PerViewResult[]; error?: string };
 
 type SpeechResultEvent = {
   results: ArrayLike<ArrayLike<{ transcript: string }>>;
@@ -53,17 +51,22 @@ type SpeechWindow = Window & {
   webkitSpeechRecognition?: new () => SpeechRecognitionLike;
 };
 
-/** Compress any image source to 1024px webp data URL (<2MB). */
+/** Compress an image source to WebP under 800 KB at a 1024px longest edge. */
 async function toCompressedDataUrl(src: string): Promise<string> {
-  if (src.startsWith("data:")) return src;
   const blob = await (await fetch(src)).blob();
   const url = URL.createObjectURL(blob);
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = reject;
-    el.src = url;
-  });
+  let img: HTMLImageElement;
+  try {
+    img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = url;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+    if (src.startsWith("blob:")) URL.revokeObjectURL(src);
+  }
   const max = 1024;
   const scale = Math.min(1, max / Math.max(img.width, img.height));
   const canvas = document.createElement("canvas");
@@ -71,24 +74,31 @@ async function toCompressedDataUrl(src: string): Promise<string> {
   canvas.height = Math.round(img.height * scale);
   canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
   URL.revokeObjectURL(url);
-  let out = canvas.toDataURL("image/webp", 0.85);
-  let q = 0.85;
-  while (out.length > 2_000_000 && q > 0.3) {
-    q -= 0.15;
-    out = canvas.toDataURL("image/webp", q);
+  const maxBytes = 800 * 1024;
+  for (let quality = 0.86; quality >= 0.2; quality -= 0.08) {
+    const compressed = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+    if (compressed && compressed.size < maxBytes) {
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(compressed);
+      });
+    }
   }
-  return out;
+  throw new Error("Image could not be compressed below 800 KB.");
 }
 
 export default function StudioPage() {
   const [name, setName] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [image, setImage] = useState<string | null>(null);
+  const [images, setImages] = useState<StudioView[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [idea, setIdea] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [step, setStep] = useState<Step | null>(null);
-  const [result, setResult] = useState<PlanResponse | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
   const [dragging, setDragging] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -99,6 +109,9 @@ export default function StudioPage() {
   const [listening, setListening] = useState(false);
   const [speechMessage, setSpeechMessage] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const [generationError, setGenerationError] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const prefersReducedMotion = useReducedMotion();
   const fileRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechBaseRef = useRef("");
@@ -119,30 +132,61 @@ export default function StudioPage() {
 
   useEffect(() => () => recognitionRef.current?.stop(), []);
 
-  const onFile = useCallback(async (file: File | undefined) => {
-    if (!file) return;
-    try {
-      setImage(await toCompressedDataUrl(URL.createObjectURL(file)));
-      setPhase("idle");
-      setResult(null);
-    } catch {
-      /* ignore */
-    }
-  }, []);
+  const onFiles = useCallback(async (files: File[]) => {
+    const remaining = Math.max(0, 3 - images.length);
+    const accepted = files.slice(0, remaining);
+    setUploadError("");
+    const convertedResults = await Promise.all(accepted.map(async (file) => {
+      try {
+        return {
+          id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+          image: await toCompressedDataUrl(URL.createObjectURL(file)),
+          label: file.name,
+          status: "idle" as const,
+        };
+      } catch {
+        return null;
+      }
+    }));
+    const converted = convertedResults.filter((view): view is NonNullable<typeof view> => view !== null);
+    if (converted.length !== accepted.length) setUploadError("Some images could not be compressed below 800 KB and were not added.");
+    setImages((current) => {
+      const combined = [...current, ...converted];
+      const wideIndex = combined.findIndex((view) => view.label.toLowerCase().includes("full-mandir-hall-room"));
+      if (wideIndex > 0) combined.unshift(...combined.splice(wideIndex, 1));
+      return combined.map((view) => ({ ...view, status: "idle" as const, result: undefined }));
+    });
+    setPhase("idle");
+    setPlan(null);
+    setGenerationError("");
+  }, [images.length]);
 
-  const pickSample = useCallback(async (src: string) => {
+  const pickSample = useCallback(async (sample: (typeof SAMPLES)[number]) => {
     setGalleryOpen(false);
     setPhase("idle");
-    setResult(null);
-    setImage(await toCompressedDataUrl(src));
+    setPlan(null);
+    setGenerationError("");
+    setUploadError("");
+    const sampleImages = sample.isRealRoom && sample.images?.length ? sample.images : [sample.src];
+    const converted = await Promise.all(sampleImages.slice(0, 3).map(async (src, index) => ({
+      id: `${sample.id}-${index}`,
+      image: await toCompressedDataUrl(src),
+      label: src.split("/").at(-1) ?? `View ${index + 1}`,
+      status: "idle" as const,
+    })));
+    setImages(converted);
+    setActiveIndex(0);
   }, []);
 
   useEffect(() => {
     const sampleId = new URLSearchParams(window.location.search).get("sample");
     const sample = SAMPLES.find((entry) => entry.id === sampleId && entry.isRealRoom);
-    const overviewImage = sample?.images?.[0];
-    if (overviewImage) void pickSample(overviewImage);
+    if (sample) void pickSample(sample);
   }, [pickSample]);
+
+  const activeView = images[activeIndex] ?? null;
+  const activeResult = activeView?.result ?? null;
+  const proposalSrc = activeResult?.proposalUrl ?? activeView?.image ?? "";
 
   const showSamples = () => {
     setGalleryOpen(true);
@@ -195,44 +239,69 @@ export default function StudioPage() {
   };
 
   const runMagic = async () => {
-    if (!image || phase === "loading") return;
+    if (!images.length || phase === "loading") return;
     const text = idea.trim() || "Make this room calmer, brighter and work-friendly";
     setPhase("loading");
-    setResult(null);
+    setGenerationError("");
     setStep("spark");
-    let data: PlanResponse;
+    setImages((current) => current.map((view) => ({ ...view, status: "loading", result: undefined })));
     try {
-      const imageBase64 = await toCompressedDataUrl(image);
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64, text }),
+        body: JSON.stringify({ images: images.map((view) => view.image), text }),
       });
-      data = (await res.json()) as PlanResponse;
-      // Let the second loading step read before revealing the result.
+      const data = (await res.json()) as BatchResponse;
+      if (!res.ok) throw new Error(data.error ?? "Planning request failed.");
+      setPlan(data.plan);
+      setImages((current) => current.map((view, index) => {
+        const viewResult = data.results.find((item) => item.index === index);
+        return { ...view, status: viewResult?.proposalUrl ? "success" : "error", result: viewResult ?? { index, proposalUrl: null, samResults: null, error: "No result returned for this view." } };
+      }));
       setStep("image");
-      await new Promise((r) => setTimeout(r, 800));
-    } catch {
-      data = {
-        plan: {
-          goal: text,
-          constraints: [],
-          operations: [
-            { action: "remove", target: "clutter" },
-            { action: "recolor", target: "walls", value: "warm white" },
-            { action: "reposition", target: "desk", value: "near the window" },
-          ],
-        },
-        samResults: null,
-        proposalUrl: null,
-        error: "Couldn't reach the planning service. A starter plan is shown.",
-      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Couldn't reach the planning service.";
+      setGenerationError(message);
+      setImages((current) => current.map((view, index) => ({
+        ...view,
+        status: "error",
+        result: { index, proposalUrl: null, samResults: null, error: message },
+      })));
     }
-    setResult(data);
     setDraftName(name ?? "");
     setEditingPlan(false);
     setStep(null);
     setPhase("result");
+  };
+
+  const retryView = async (index: number) => {
+    const view = images[index];
+    if (!view || !plan || view.status === "loading") return;
+    const text = idea.trim() || plan.goal;
+    setGenerationError("");
+    setImages((current) => current.map((item, viewIndex) => viewIndex === index ? { ...item, status: "loading" } : item));
+    try {
+      const response = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images: [view.image], text, existingPlan: plan, index }),
+      });
+      const data = (await response.json()) as BatchResponse;
+      if (!response.ok) throw new Error(data.error ?? "Retry failed.");
+      const result = data.results[0];
+      setImages((current) => current.map((item, viewIndex) => viewIndex === index ? {
+        ...item,
+        status: result?.proposalUrl ? "success" : "error",
+        result: result ?? { index, proposalUrl: null, samResults: null, error: "No result returned for this view." },
+      } : item));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Retry failed.";
+      setImages((current) => current.map((item, viewIndex) => viewIndex === index ? {
+        ...item,
+        status: "error",
+        result: { index, proposalUrl: null, samResults: item.result?.samResults ?? null, error: message },
+      } : item));
+    }
   };
 
   const saveName = (next: string) => {
@@ -247,43 +316,41 @@ export default function StudioPage() {
   };
 
   const updateOperation = (index: number, patch: Partial<Operation>) => {
-    setResult((current) => current ? {
-      ...current,
-      plan: { ...current.plan, operations: current.plan.operations.map((operation, i) => i === index ? { ...operation, ...patch } : operation) },
-    } : current);
+    setPlan((current) => current ? { ...current, operations: current.operations.map((operation, i) => i === index ? { ...operation, ...patch } : operation) } : current);
   };
 
   const removeOperation = (index: number) => {
-    setResult((current) => current ? {
-      ...current,
-      plan: { ...current.plan, operations: current.plan.operations.filter((_, i) => i !== index) },
-    } : current);
+    setPlan((current) => current ? { ...current, operations: current.operations.filter((_, i) => i !== index) } : current);
   };
 
   const regenerateEditedPlan = async () => {
-    if (!image || !result || phase === "loading") return;
-    const updatedOperations = result.plan.operations;
-    const editedPrompt = idea.trim() || result.plan.goal;
+    if (!images.length || !plan || phase === "loading") return;
+    const editedPlan = plan;
+    const editedPrompt = idea.trim() || plan.goal;
     setStep("image");
     setSavedMessage("");
+    setImages((current) => current.map((view) => ({ ...view, status: "loading" })));
     try {
-      const imageBase64 = await toCompressedDataUrl(image);
       const response = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageBase64,
+          images: images.map((view) => view.image),
           text: editedPrompt,
-          operations: updatedOperations,
-          isEdit: true,
+          existingPlan: editedPlan,
         }),
       });
-      const data = (await response.json()) as PlanResponse;
+      const data = (await response.json()) as BatchResponse;
       if (!response.ok) throw new Error(data.error ?? "Edit regeneration failed");
-      setResult(data);
+      setPlan(data.plan);
+      setImages((current) => current.map((view, index) => {
+        const viewResult = data.results.find((item) => item.index === index);
+        return { ...view, status: viewResult?.proposalUrl ? "success" : "error", result: viewResult };
+      }));
       setEditingPlan(false);
     } catch {
       setSavedMessage("Could not regenerate this edit. Your operation changes are preserved.");
+      setImages((current) => current.map((view) => ({ ...view, status: "error" })));
     } finally {
       setStep(null);
     }
@@ -298,11 +365,11 @@ export default function StudioPage() {
   };
 
   const persistEdit = () => {
-    if (!image || !plan) return;
+    if (!activeView || !plan || !activeResult?.proposalUrl || activeView.status !== "success") return;
     try {
       saveEdit({
-        originalUrl: image,
-        proposalUrl: result?.proposalUrl ?? image,
+        originalUrl: activeView.image,
+        proposalUrl: activeResult.proposalUrl,
         plan,
         timestamp: new Date().toISOString(),
       });
@@ -315,8 +382,6 @@ export default function StudioPage() {
 
   const displayName = name ?? "there";
   const initial = displayName.slice(0, 1).toUpperCase();
-  const plan = result?.plan ?? null;
-  const proposalSrc = result?.proposalUrl ?? image ?? "";
 
   return (
     <div className="min-h-screen pb-20 md:pb-0">
@@ -383,17 +448,41 @@ export default function StudioPage() {
             </h2>
           </div>
 
+          {images.length > 0 && (
+            <Tabs value={String(activeIndex)} onValueChange={(value) => setActiveIndex(Number(value))} className="mt-4">
+              <TabsList aria-label="Room views" className="flex w-full flex-wrap">
+                {images.map((view, index) => (
+                  <TabsTrigger key={view.id} value={String(index)} aria-label={`${view.label}, ${view.status}`} className={cn("relative w-20 overflow-hidden", view.status === "error" && "border-red-500 data-[state=active]:border-red-500") }>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={view.image} alt="" className="aspect-[4/3] w-full rounded object-cover" />
+                    <span className="block truncate px-1 text-[10px]">{view.label || `View ${index + 1}`}</span>
+                    <span className="sr-only">{view.status === "error" ? "Generation failed" : view.status === "loading" ? "Generating" : ""}</span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          )}
+
           {/* Dropzone / preview — scales up while dragging */}
-          <Dropzone
-            image={image}
-            samResults={result?.samResults ?? null}
-            dragging={dragging}
-            fileInputRef={fileRef}
-            onFile={onFile}
-            onDraggingChange={setDragging}
-            onShowSamples={showSamples}
-            onReplace={() => { setImage(null); setPhase("idle"); setResult(null); }}
-          />
+          <motion.div
+            key={activeView?.id ?? "empty"}
+            initial={{ opacity: 0, x: prefersReducedMotion ? 0 : 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: prefersReducedMotion ? 0 : 0.3 }}
+          >
+            <Dropzone
+              images={images.map((view) => view.image)}
+              activeImage={activeView?.image ?? null}
+              samResults={activeResult?.samResults ?? null}
+              dragging={dragging}
+              fileInputRef={fileRef}
+              onFiles={onFiles}
+              onDraggingChange={setDragging}
+              onShowSamples={showSamples}
+              onClear={() => { setImages([]); setActiveIndex(0); setPhase("idle"); setPlan(null); setGenerationError(""); setUploadError(""); }}
+            />
+          </motion.div>
+          {uploadError && <p className="mt-2 text-center text-xs font-semibold text-red-600" role="alert">{uploadError}</p>}
 
           {/* Idea input */}
           <label
@@ -433,7 +522,7 @@ export default function StudioPage() {
               variant="magic"
               size="pill"
               onClick={runMagic}
-              disabled={!image || phase === "loading"}
+              disabled={!images.length || phase === "loading"}
               className="magic-glow w-56"
             >
               {phase === "loading" ? (
@@ -455,21 +544,28 @@ export default function StudioPage() {
             </motion.div>
           )}
 
+          {phase === "result" && generationError && !plan && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300" role="alert">
+              <span>{generationError}</span>
+              <Button variant="outline" size="sm" onClick={runMagic}>Retry all views</Button>
+            </div>
+          )}
+
           {/* Live result: banner + Spark checklist + real before/after */}
-          {phase === "result" && image && plan && (
-            <motion.div initial={{ opacity: 0, y: 24, scale: 0.98 }} whileInView={{ opacity: 1, y: 0, scale: 1 }} viewport={{ once: true, margin: "-100px" }} transition={{ duration: 0.5 }} className="mt-6 space-y-4">
-              {(!result?.proposalUrl || result?.error) && (
-                <p className="rounded-xl bg-surface2/60 px-3 py-2 text-xs font-bold text-primary dark:bg-white/5 dark:text-surface2">
-                  {result?.error ??
-                    "Proposal unavailable; showing the original photo."}
-                </p>
+          {phase === "result" && activeView && plan && (
+            <motion.div key={`result-${activeView.id}`} initial={{ opacity: 0, x: prefersReducedMotion ? 0 : 10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: prefersReducedMotion ? 0 : 0.3 }} className="mt-6 space-y-4">
+              {(generationError || activeView.status === "error") && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                  <span>{activeResult?.error ?? generationError ?? "Generation failed for this view."}</span>
+                  {activeView.status === "error" && <Button variant="outline" size="sm" onClick={() => retryView(activeIndex)}>Retry view</Button>}
+                </div>
               )}
               <div id="plan-checklist">
                 <p className="text-sm font-bold text-primary dark:text-white">
                   Plan — {plan.goal}
                 </p>
                 <div className="mt-2 flex items-center justify-between gap-3">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{result?.samResults?.connected ? `SAM connected · ${result.samResults.boxes.length} objects detected` : `Objects from plan: ${result?.samResults?.boxes.length ?? 0}`}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{activeResult?.samResults?.connected ? `SAM connected · ${activeResult.samResults.boxes.length} objects detected` : `Objects from plan: ${activeResult?.samResults?.boxes.length ?? 0}`}</p>
                   <Button variant="ghost" size="sm" disabled={step === "image"} onClick={() => editingPlan ? regenerateEditedPlan() : setEditingPlan(true)}>{step === "image" ? "Re-generating..." : editingPlan ? "Done editing" : "Edit plan"}</Button>
                 </div>
                 {plan.constraints.length > 0 && (
@@ -507,13 +603,13 @@ export default function StudioPage() {
                     </li>
                   ))}
                 </ul>
-                {result?.samResults?.boxes.length ? <ul className="mt-2 flex flex-wrap gap-2" aria-label="Detected objects">
-                  {result.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">{box.label}</li>)}
+                {activeResult?.samResults?.boxes.length ? <ul className="mt-2 flex flex-wrap gap-2" aria-label="Detected objects">
+                  {activeResult.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">{box.label}</li>)}
                 </ul> : null}
               </div>
-              <BeforeAfterSlider before={image} after={proposalSrc} afterLabel="Generated proposal" />
+              {activeResult?.proposalUrl && <BeforeAfterSlider before={activeView.image} after={proposalSrc} afterLabel="Generated proposal" />}
               <div className="flex flex-col items-center gap-2">
-                <Button variant="default" size="pill" onClick={persistEdit} className="magic-glow w-56 bg-primary text-white">
+                <Button variant="default" size="pill" onClick={persistEdit} disabled={activeView.status !== "success" || !activeResult?.proposalUrl} className="magic-glow w-56 bg-primary text-white">
                   <Save className="size-3.5" />
                   Save Edit
                 </Button>
@@ -531,7 +627,7 @@ export default function StudioPage() {
             </h2>
             <div className="mt-2 rounded-xl bg-surface p-3 dark:bg-night">
               <FloorPlan className="w-full" />
-              {image ? (
+              {images.length ? (
                 <ul className="mt-2 space-y-1 text-xs text-slate-500 dark:text-slate-300">
                   <li>• Desk works best near the window.</li>
                   <li>• Declutter surfaces before shooting.</li>
@@ -563,7 +659,7 @@ export default function StudioPage() {
           {SAMPLES.map((s) => (
             <button
               key={s.id}
-              onClick={() => pickSample(s.src)}
+              onClick={() => pickSample(s)}
               className="group relative aspect-square overflow-hidden rounded-xl shadow-key transition-all duration-150 hover:-translate-y-px hover:shadow-key-lg"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}

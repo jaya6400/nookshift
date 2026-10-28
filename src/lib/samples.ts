@@ -6,6 +6,7 @@ export type Sample = {
   title?: string;
   description?: string;
   images?: string[];
+  primaryImage?: string;
   isRealRoom?: boolean;
 };
 
@@ -37,6 +38,7 @@ export const SAMPLES: Sample[] = [
       "/samples/real-room/mandir-area.jpg",
       "/samples/real-room/two-seater.jpg",
     ],
+    primaryImage: "/samples/real-room/full-mandir-hall-room.jpg",
     src: "/samples/real-room/full-mandir-hall-room.jpg",
     label: "My Real Room - India 1BHK",
     hint: "Real cluttered 1BHK in India — test real-world rearrangement",
