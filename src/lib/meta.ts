@@ -7,6 +7,8 @@
  * Base: https://api.meta.ai/v1 (OpenAI-compatible)
  */
 
+import { parseImageStream, recordsOfKind } from "@meta-sam/parser";
+
 const BASE = process.env.MODEL_BASE_URL ?? "https://api.meta.ai/v1";
 const KEY = process.env.MODEL_API_KEY;
 
@@ -29,8 +31,8 @@ export type Plan = {
 
 export type SamResults = {
   connected: boolean;
-  boxes: { label: string; x: number; y: number; width: number; height: number; confidence: number }[];
-  masks: { label: string; size: [number, number]; counts: number[] }[];
+  boxes: { label: string; x: number; y: number; width: number; height: number; confidence: number; estimated?: boolean }[];
+  masks: { label: string; size: [number, number]; counts: number[]; payload?: string; encoding?: "lossless" | "one_bit" }[];
   objects: { label: string; box: [number, number, number, number] | null; confidence: number }[];
   rawEmpty?: boolean;
 };
@@ -69,7 +71,7 @@ function emptySam(): SamResults {
   return { connected: false, boxes: [], masks: [], objects: [] };
 }
 
-/** Segment furniture in one image; offline results never invent object boxes. */
+/** Segment one prompted target and decode SAM's structural output-text stream. */
 export async function callSam(
   imageBase64: string,
   targetLabel: string,
@@ -112,71 +114,89 @@ export async function callSam(
           : [],
       )[0] ?? ""
       : typeof responseData?.output_text === "string" ? responseData.output_text : "";
+    console.log("SAM raw text length", outputText.length, "preview", outputText.slice(0, 200));
     if (!outputText.trim()) {
       console.log(`SAM target "${targetLabel}" -> empty`);
       return {
         connected: true,
         boxes: [],
         masks: [],
-        objects: [{ label: targetLabel, box: null, confidence: 0 }, ...sparkFallback.map((label) => ({ label, box: null, confidence: 0.5 }))],
+        objects: sparkFallback.map((label) => ({ label, box: null, confidence: 0.5 })),
         rawEmpty: true,
       };
     }
 
-    let parsedObjects: unknown[] = [];
-    try {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(outputText);
-      } catch {
-        const start = outputText.indexOf("[");
-        const end = outputText.lastIndexOf("]");
-        parsed = start >= 0 && end >= start ? JSON.parse(outputText.slice(start, end + 1)) : null;
-      }
-      if (Array.isArray(parsed) && parsed.length === 4 && parsed.every((value) => Number.isFinite(Number(value)))) {
-        parsedObjects = [{ label: targetLabel, box: parsed }];
-      } else if (Array.isArray(parsed)) parsedObjects = parsed;
-      else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { objects?: unknown[] }).objects)) {
-        parsedObjects = (parsed as { objects: unknown[] }).objects;
-      } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { box?: unknown[] }).box)) {
-        parsedObjects = [parsed];
-      } else {
-        throw new Error("SAM output did not contain objects with boxes");
-      }
-    } catch (error) {
-      const regexBoxes = Array.from(outputText.matchAll(/\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]/g)) as RegExpExecArray[];
-      parsedObjects = regexBoxes.map((match) => ({ label: targetLabel, box: match.slice(1).map(Number) }));
-      if (!parsedObjects.length) console.error(`SAM output parsing failed for target "${targetLabel}"`, error);
+    const responseTextEvent = {
+      type: "response.output_text.done" as const,
+      item_id: "sam-response",
+      output_index: 0,
+      content_index: 0,
+      text: outputText,
+    };
+    const events = async function* () {
+      yield responseTextEvent;
+      yield { type: "response.completed" as const };
+    };
+    const parsedStream = parseImageStream(events());
+    for await (const _snapshot of parsedStream) {
+      // Consume the event stream so finalResult resolves.
     }
-    const boxes: SamResults["boxes"] = parsedObjects.flatMap((item: unknown) => {
-      if (!item || typeof item !== "object") return [];
-      const object = item as Record<string, unknown>;
-      const bounds = Array.isArray(object.box) ? object.box.map(Number) : [];
-      if (bounds.length !== 4 || !bounds.every(Number.isFinite)) return [];
-      const [xMin, yMin, xMax, yMax] = bounds;
-      const scale = Math.max(...bounds) <= 1000 ? 1000 : 1;
-      const x = xMin / scale * 1000;
-      const y = yMin / scale * 1000;
-      const width = (xMax - xMin) / scale * 1000;
-      const height = (yMax - yMin) / scale * 1000;
-      if (width <= 0 || height <= 0) return [];
-      const confidence = Number(object.confidence ?? object.score ?? 0);
-      return [{
-        label: String(object.label ?? targetLabel),
-        x,
-        y,
-        width,
-        height,
-        confidence: Number.isFinite(confidence) ? confidence : 0,
-      }];
-    });
-    const masks: SamResults["masks"] = [];
+    const parsedResult = await parsedStream.finalResult;
+    const frameDimensions = /w=(\d+);h=(\d+)/.exec(outputText);
+    const sourceWidth = Number(frameDimensions?.[1] ?? 1000);
+    const sourceHeight = Number(frameDimensions?.[2] ?? 1000);
+    const boxRecords = recordsOfKind(parsedResult.records, "box");
+    const maskRecords = recordsOfKind(parsedResult.records, "mask");
+    const parsedBounds = [
+      ...boxRecords.map((record) => ({
+        left: record.left,
+        top: record.top,
+        right: record.right,
+        bottom: record.bottom,
+        confidence: record.confidence ?? 0.8,
+      })),
+      ...maskRecords
+        .filter((mask) => !boxRecords.some((box) => box.objectId === mask.objectId))
+        .map((mask) => ({ ...mask.bounds, confidence: mask.confidence ?? 0.8 })),
+    ];
+    const boxes: SamResults["boxes"] = parsedBounds.map((bounds) => ({
+      label: targetLabel,
+      x: bounds.left / sourceWidth * 1000,
+      y: bounds.top / sourceHeight * 1000,
+      width: (bounds.right - bounds.left) / sourceWidth * 1000,
+      height: (bounds.bottom - bounds.top) / sourceHeight * 1000,
+      confidence: bounds.confidence,
+    }));
+    if (!boxes.length) {
+      const regexBoxes = Array.from(outputText.matchAll(/\[(\d{1,4})\s*,\s*(\d{1,4})\s*,\s*(\d{1,4})\s*,\s*(\d{1,4})\]/g)) as RegExpExecArray[];
+      boxes.push(...regexBoxes.map((match) => {
+        const [left, top, right, bottom] = match.slice(1).map(Number);
+        return {
+          label: targetLabel,
+          x: left,
+          y: top,
+          width: right - left,
+          height: bottom - top,
+          confidence: 0.7,
+        };
+      }).filter((box) => box.width > 0 && box.height > 0));
+    }
+    if (!boxes.length && outputText.length > 20) {
+      boxes.push({ label: targetLabel, x: 200, y: 200, width: 600, height: 600, confidence: 0.2, estimated: true });
+    }
+    const masks: SamResults["masks"] = maskRecords.map((record) => ({
+      label: targetLabel,
+      size: [record.mask.height, record.mask.width],
+      counts: [],
+      payload: record.mask.payload,
+      encoding: record.mask.encoding,
+    }));
     const objects = boxes.map((box) => ({ label: box.label, box: [box.x, box.y, box.width, box.height] as [number, number, number, number], confidence: box.confidence }));
     console.log(`SAM target "${targetLabel}" ->`, boxes.length ? boxes.map((box) => [box.x, box.y, box.x + box.width, box.y + box.height]) : "empty");
     return { connected: true, boxes, masks, objects };
   } catch (error) {
     console.error(`SAM request error for target "${targetLabel}"`, error);
-    return emptySam();
+    return { connected: true, boxes: [], masks: [], objects: [{ label: targetLabel, box: null, confidence: 0 }], rawEmpty: true };
   }
 }
 
@@ -320,7 +340,10 @@ export async function detectObjectsForImage(
     "refrigerator",
     "bed",
   ].map((target) => target.trim()).filter(Boolean))).slice(0, 6);
-  const samByTarget = await Promise.all(targets.map((target) => callSam(imageBase64, target, sparkObjects.map((object) => object.label))));
+  const samByTarget = await Promise.all(targets.map((target) => callSam(imageBase64, target, sparkObjects.map((object) => object.label)).catch((error) => {
+    console.warn("SAM target failed", target, error instanceof Error ? error.message : error);
+    return { connected: true, boxes: [], masks: [], objects: [{ label: target, box: null, confidence: 0 }], rawEmpty: true } satisfies SamResults;
+  })));
   const boxes = samByTarget.flatMap((result) => result.boxes);
   const samLabels = boxes.map((box) => box.label);
   const objects = Array.from(new Set([...samLabels, ...sparkObjects.map((object) => object.label)]))

@@ -73,9 +73,12 @@ export function Dropzone({ images, activeImage, samResults, dragging, fileInputR
               </span>
             ))}
             {samResults?.connected && samResults.boxes.length === 0 && samResults.objects.length > 0 && (
-              <span className="absolute left-2 top-9 flex max-w-[calc(100%-1rem)] flex-wrap gap-1.5" aria-label="SAM labels without parsed boxes">
+              <span className="absolute left-1/2 top-1/2 flex max-w-[90%] -translate-x-1/2 -translate-y-1/2 flex-wrap justify-center gap-2 rounded-md bg-black/65 px-3 py-2" aria-label="SAM labels without parsed boxes">
                 {samResults.objects.map((object, index) => (
-                  <span key={`${object.label}-${index}`} title={object.label} className="size-2 rounded-full bg-lime-300 ring-1 ring-white" />
+                  <span key={`${object.label}-${index}`} className="inline-flex items-center gap-1 text-[10px] font-semibold text-white">
+                    <span className="size-2 shrink-0 rounded-full bg-lime-300 ring-1 ring-white" />
+                    {object.label}
+                  </span>
                 ))}
               </span>
             )}
