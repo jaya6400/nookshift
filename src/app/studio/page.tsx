@@ -24,10 +24,10 @@ import { saveEdit } from "@/lib/saved-edits";
 import { cn } from "@/lib/utils";
 
 type Phase = "idle" | "loading" | "result";
-type Step = "spark" | "image";
+type Step = "spark" | "image" | "refine";
 
 type ViewStatus = "idle" | "loading" | "success" | "error";
-type StudioView = { id: string; image: string; label: string; status: ViewStatus; result?: PerViewResult };
+type StudioView = { id: string; image: string; label: string; status: ViewStatus; result?: PerViewResult; plan?: Plan };
 type BatchResponse = { plan: Plan; results: PerViewResult[]; error?: string };
 
 type SpeechResultEvent = {
@@ -106,6 +106,8 @@ export default function StudioPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [editingPlan, setEditingPlan] = useState(false);
+  const [refineInput, setRefineInput] = useState("");
+  const [refineInstructionsByView, setRefineInstructionsByView] = useState<Record<string, string[]>>({});
   const [listening, setListening] = useState(false);
   const [speechMessage, setSpeechMessage] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
@@ -186,6 +188,8 @@ export default function StudioPage() {
 
   const activeView = images[activeIndex] ?? null;
   const activeResult = activeView?.result ?? null;
+  const activePlan = activeView?.plan ?? plan;
+  const refineInstructions = activeView ? refineInstructionsByView[activeView.id] ?? [] : [];
   const proposalSrc = activeResult?.proposalUrl ?? activeView?.image ?? "";
 
   const showSamples = () => {
@@ -316,41 +320,93 @@ export default function StudioPage() {
   };
 
   const updateOperation = (index: number, patch: Partial<Operation>) => {
-    setPlan((current) => current ? { ...current, operations: current.operations.map((operation, i) => i === index ? { ...operation, ...patch } : operation) } : current);
+    const currentPlan = activeView?.plan ?? plan;
+    const nextPlan = currentPlan ? { ...currentPlan, operations: currentPlan.operations.map((operation, i) => i === index ? { ...operation, ...patch } : operation) } : null;
+    if (!nextPlan) return;
+    if (activeView?.plan) setImages((current) => current.map((view, viewIndex) => viewIndex === activeIndex ? { ...view, plan: nextPlan } : view));
+    else setPlan(nextPlan);
   };
 
   const removeOperation = (index: number) => {
-    setPlan((current) => current ? { ...current, operations: current.operations.filter((_, i) => i !== index) } : current);
+    const currentPlan = activeView?.plan ?? plan;
+    const nextPlan = currentPlan ? { ...currentPlan, operations: currentPlan.operations.filter((_, i) => i !== index) } : null;
+    if (!nextPlan) return;
+    if (activeView?.plan) setImages((current) => current.map((view, viewIndex) => viewIndex === activeIndex ? { ...view, plan: nextPlan } : view));
+    else setPlan(nextPlan);
+  };
+
+  const addRefineInstruction = () => {
+    const instruction = refineInput.trim();
+    if (!instruction || !activeView) return;
+    setRefineInstructionsByView((current) => ({
+      ...current,
+      [activeView.id]: [...(current[activeView.id] ?? []), instruction],
+    }));
+    setRefineInput("");
+  };
+
+  const operationFromRefineInstruction = (instruction: string): Operation => {
+    const removeMatch = /(?:remove|delete|take out|get rid of)\s+(?:the\s+)?(.+?)(?:\s+that was added)?[.!?]?$/i.exec(instruction);
+    if (removeMatch) {
+      return { action: "remove", target: removeMatch[1].trim(), value: instruction, isRefine: true };
+    }
+    const repositionMatch = /(?:move|shift|reposition)\s+(?:the\s+)?(.+?)\s+(?:to\s+)?(.+?)[.!?]?$/i.exec(instruction);
+    if (repositionMatch) {
+      return { action: "reposition", target: repositionMatch[1].trim(), value: repositionMatch[2].trim(), isRefine: true };
+    }
+    const recolorMatch = /(?:paint|recolor|colour|color)\s+(?:the\s+)?(.+?)\s+(?:to\s+)?(.+?)[.!?]?$/i.exec(instruction);
+    if (recolorMatch) {
+      return { action: "recolor", target: recolorMatch[1].trim(), value: recolorMatch[2].trim(), isRefine: true };
+    }
+    return { action: "keep", target: instruction, isRefine: true };
   };
 
   const regenerateEditedPlan = async () => {
-    if (!images.length || !plan || phase === "loading") return;
-    const editedPlan = plan;
-    const editedPrompt = idea.trim() || plan.goal;
-    setStep("image");
+    if (!activeView || !activePlan || phase === "loading") return;
+    const basePrompt = idea.trim() || activePlan.goal;
+    const editedPrompt = refineInstructions.length
+      ? `${basePrompt}. Also, ${refineInstructions.join(", ")}. Keep existing room layout, camera angle, windows, and other furniture unchanged. Do not add new furniture unless explicitly requested.`
+      : `${basePrompt}. Keep existing room layout, camera angle, windows, and other furniture unchanged. Do not add new furniture unless explicitly requested.`;
+    const combinedOperations: Operation[] = [
+      ...activePlan.operations,
+      ...refineInstructions.map(operationFromRefineInstruction),
+    ];
+    setStep("refine");
     setSavedMessage("");
-    setImages((current) => current.map((view) => ({ ...view, status: "loading" })));
+    setImages((current) => current.map((view, viewIndex) => viewIndex === activeIndex ? { ...view, status: "loading" } : view));
     try {
       const response = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          images: images.map((view) => view.image),
+          images: [activeView.image],
           text: editedPrompt,
-          existingPlan: editedPlan,
+          existingPlan: activePlan,
+          operations: combinedOperations,
+          index: activeIndex,
+          isRefine: true,
         }),
       });
       const data = (await response.json()) as BatchResponse;
       if (!response.ok) throw new Error(data.error ?? "Edit regeneration failed");
-      setPlan(data.plan);
-      setImages((current) => current.map((view, index) => {
-        const viewResult = data.results.find((item) => item.index === index);
-        return { ...view, status: viewResult?.proposalUrl ? "success" : "error", result: viewResult };
-      }));
+      const viewResult = data.results[0];
+      if (!viewResult?.proposalUrl) throw new Error(viewResult?.error ?? "Refinement returned no proposal.");
+      setImages((current) => current.map((view, viewIndex) => viewIndex === activeIndex ? {
+        ...view,
+        status: "success",
+        plan: data.plan,
+        result: { ...viewResult, index: activeIndex },
+      } : view));
+      setRefineInstructionsByView((current) => ({ ...current, [activeView.id]: [] }));
       setEditingPlan(false);
-    } catch {
-      setSavedMessage("Could not regenerate this edit. Your operation changes are preserved.");
-      setImages((current) => current.map((view) => ({ ...view, status: "error" })));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not regenerate this edit. Your operation changes are preserved.";
+      setSavedMessage(message);
+      setImages((current) => current.map((view, viewIndex) => viewIndex === activeIndex ? ({
+        ...view,
+        status: "error",
+        result: { index: activeIndex, proposalUrl: null, samResults: view.result?.samResults ?? null, error: message },
+      }) : view));
     } finally {
       setStep(null);
     }
@@ -365,12 +421,12 @@ export default function StudioPage() {
   };
 
   const persistEdit = () => {
-    if (!activeView || !plan || !activeResult?.proposalUrl || activeView.status !== "success") return;
+    if (!activeView || !activePlan || !activeResult?.proposalUrl || activeView.status !== "success") return;
     try {
       saveEdit({
         originalUrl: activeView.image,
         proposalUrl: activeResult.proposalUrl,
-        plan,
+        plan: activePlan,
         timestamp: new Date().toISOString(),
       });
       window.dispatchEvent(new Event("nookshift:saved-edits"));
@@ -449,7 +505,7 @@ export default function StudioPage() {
           </div>
 
           {images.length > 0 && (
-            <Tabs value={String(activeIndex)} onValueChange={(value) => setActiveIndex(Number(value))} className="mt-4">
+            <Tabs value={String(activeIndex)} onValueChange={(value) => { setActiveIndex(Number(value)); setRefineInput(""); }} className="mt-4">
               <TabsList aria-label="Room views" className="flex w-full flex-wrap">
                 {images.map((view, index) => (
                   <TabsTrigger key={view.id} value={String(index)} aria-label={`${view.label}, ${view.status}`} className={cn("relative w-20 overflow-hidden", view.status === "error" && "border-red-500 data-[state=active]:border-red-500") }>
@@ -552,7 +608,7 @@ export default function StudioPage() {
           )}
 
           {/* Live result: banner + Spark checklist + real before/after */}
-          {phase === "result" && activeView && plan && (
+          {phase === "result" && activeView && activePlan && (
             <motion.div key={`result-${activeView.id}`} initial={{ opacity: 0, x: prefersReducedMotion ? 0 : 10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: prefersReducedMotion ? 0 : 0.3 }} className="mt-6 space-y-4">
               {(generationError || activeView.status === "error") && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 dark:bg-red-950/30 dark:text-red-300">
@@ -562,19 +618,19 @@ export default function StudioPage() {
               )}
               <div id="plan-checklist">
                 <p className="text-sm font-bold text-primary dark:text-white">
-                  Plan — {plan.goal}
+                  Plan — {activePlan.goal}
                 </p>
                 <div className="mt-2 flex items-center justify-between gap-3">
                   <p className="text-xs text-slate-500 dark:text-slate-400">{activeResult?.samResults?.connected ? `SAM connected · ${activeResult.samResults.boxes.length} objects detected` : `Objects from plan: ${activeResult?.samResults?.boxes.length ?? 0}`}</p>
-                  <Button variant="ghost" size="sm" disabled={step === "image"} onClick={() => editingPlan ? regenerateEditedPlan() : setEditingPlan(true)}>{step === "image" ? "Re-generating..." : editingPlan ? "Done editing" : "Edit plan"}</Button>
+                  <Button variant="ghost" size="sm" disabled={step !== null} onClick={() => editingPlan ? regenerateEditedPlan() : setEditingPlan(true)}>{step === "refine" ? "Refining proposal..." : step === "image" ? "Re-generating..." : editingPlan ? "Done editing" : "Edit plan"}</Button>
                 </div>
-                {plan.constraints.length > 0 && (
+                {activePlan.constraints.length > 0 && (
                   <p className="mt-0.5 text-xs italic text-slate-500 dark:text-slate-400">
-                    {plan.constraints.join(" · ")}
+                    {activePlan.constraints.join(" · ")}
                   </p>
                 )}
                 <ul className="mt-2 space-y-1.5">
-                  {plan.operations.map((op, i) => (
+                  {activePlan.operations.map((op, i) => (
                     <li
                       key={i}
                       className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-3 py-2 text-sm dark:bg-night"
@@ -603,6 +659,34 @@ export default function StudioPage() {
                     </li>
                   ))}
                 </ul>
+                  {editingPlan && (
+                    <section className="mt-4 border-t border-slate-200 pt-4 dark:border-white/10" aria-labelledby="refine-heading">
+                      <h3 id="refine-heading" className="text-sm font-bold text-primary dark:text-white">Refine with new instruction</h3>
+                      <div className="mt-2 flex gap-2">
+                        <Input
+                          value={refineInput}
+                          onChange={(event) => setRefineInput(event.target.value)}
+                          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addRefineInstruction(); } }}
+                          placeholder="Add new change, e.g., remove the extra sofa that was added, or paint ceiling white"
+                          aria-label="New refinement instruction"
+                        />
+                        <Button type="button" variant="outline" onClick={addRefineInstruction} disabled={!refineInput.trim()}>Add</Button>
+                      </div>
+                      {refineInstructions.length > 0 && (
+                        <ul className="mt-2 flex flex-wrap gap-2" aria-label="Refine instructions">
+                          {refineInstructions.map((instruction, index) => (
+                            <li key={`${instruction}-${index}`} className="inline-flex max-w-full items-center gap-2 rounded-full bg-link/10 px-3 py-1 text-xs text-primary dark:text-white">
+                              <span className="max-w-[min(70vw,32rem)] truncate">{instruction}</span>
+                              <button type="button" aria-label={`Remove instruction: ${instruction}`} onClick={() => activeView && setRefineInstructionsByView((current) => ({
+                                ...current,
+                                [activeView.id]: (current[activeView.id] ?? []).filter((_, itemIndex) => itemIndex !== index),
+                              }))} className="font-bold text-red-600">×</button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  )}
                 {activeResult?.samResults?.boxes.length ? <ul className="mt-2 flex flex-wrap gap-2" aria-label="Detected objects">
                   {activeResult.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">{box.label}</li>)}
                 </ul> : null}

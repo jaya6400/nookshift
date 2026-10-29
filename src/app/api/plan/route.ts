@@ -23,7 +23,7 @@ export const maxDuration = 60;
  * Image failure is non-fatal (proposalUrl: null, client shows stylized preview).
  */
 export async function POST(req: Request) {
-  let body: { image?: string; imageBase64?: string; images?: string[]; text?: string; operations?: Operation[]; isEdit?: boolean; existingPlan?: Plan; index?: number };
+  let body: { image?: string; imageBase64?: string; images?: string[]; text?: string; operations?: Operation[]; isEdit?: boolean; isRefine?: boolean; existingPlan?: Plan; index?: number };
   try {
     body = await req.json();
   } catch {
@@ -52,7 +52,16 @@ export async function POST(req: Request) {
     }
 
     let plan: Plan;
-    if (body.existingPlan) {
+    if (body.isRefine) {
+      if (images.length !== 1 || !body.existingPlan || !Array.isArray(body.operations) || !Number.isInteger(body.index) || index < 0 || index > 2) {
+        return NextResponse.json({ error: "Refinement requires one image, an index, existingPlan, and operations" }, { status: 400 });
+      }
+      const operations = body.operations.filter((operation) =>
+        ["keep", "remove", "recolor", "reposition"].includes(operation.action) &&
+        typeof operation.target === "string" && operation.target.trim().length > 0
+      );
+      plan = { ...body.existingPlan, goal: text, operations };
+    } else if (body.existingPlan) {
       plan = body.existingPlan!;
     } else {
       try {
@@ -81,7 +90,7 @@ export async function POST(req: Request) {
       return { index: resultIndex, proposalUrl, samResults, ...(error ? { error } : {}) };
     };
 
-    const results = isRetry
+    const results = isRetry || body.isRefine
       ? [await processView(images[0], index)]
       : await Promise.all(images.map((image, resultIndex) => processView(image, resultIndex)));
     return NextResponse.json({ plan, results });

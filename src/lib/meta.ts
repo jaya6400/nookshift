@@ -18,6 +18,7 @@ export type Operation = {
   action: "keep" | "remove" | "recolor" | "reposition";
   target: string;
   value?: string;
+  isRefine?: boolean;
 };
 
 export type Plan = {
@@ -37,6 +38,8 @@ export type BatchRequest = {
   text: string;
   existingPlan?: Plan;
   index?: number;
+  operations?: Operation[];
+  isRefine?: boolean;
 };
 
 export type PerViewResult = {
@@ -127,6 +130,7 @@ const SPARK_SYSTEM = [
   "Return JSON only — no markdown fences, no prose.",
   'Schema: {"goal": string, "constraints": string[], "operations": [{"action": "keep|remove|recolor|reposition", "target": string, "value": string}]}.',
   "Every operation target must be a concrete object visible in the room photo.",
+  "If the user asks to move a sofa, interpret it as repositioning the existing sofa, never creating another one. For a two-seater sofa movement, use {\"action\":\"reposition\",\"target\":\"two-seater sofa\",\"value\":\"slightly right near fridge\"} when that matches the request.",
   "Respect renter constraints: no structural changes, no drilling, keep beloved items.",
 ].join(" ");
 
@@ -240,11 +244,16 @@ export function planToPrompt(plan: Plan, userText: string): string {
       return `${op.action}: ${op.target}${v}`;
     })
     .join("; ");
+  const sofaGuard = /sofa|two.seater|mandir|fridge/i.test(`${plan.goal} ${userText}`)
+    ? "Do not add new sofas, chairs, or furniture. Only move the existing two-seater slightly to the right when requested. Keep the mandir, fridge, bed, and windows unchanged."
+    : "Do not add new furniture or duplicate existing objects unless explicitly requested.";
   return [
     `Renter-friendly redesign. Goal: ${plan.goal}.`,
     `Requested by user: "${userText}".`,
     `Changes: ${ops}.`,
     "Keep the same camera angle, walls, floor, window and lighting.",
+    "Do not add unrequested furniture, duplicate objects, or change the room layout.",
+    sofaGuard,
     "Photorealistic interior design proposal, no structural changes.",
   ].join(" ");
 }
