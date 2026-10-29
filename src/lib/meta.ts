@@ -12,10 +12,10 @@ const KEY = process.env.MODEL_API_KEY;
 
 export const SPARK_MODEL = "muse-spark-1.3";
 export const IMAGE_MODEL = "muse-image-1.0";
-export const SAM_MODEL = "sam-3.1";
+export const SAM_MODEL = process.env.SAM_MODEL || "sam-3.1";
 
 export type Operation = {
-  action: "keep" | "remove" | "recolor" | "reposition";
+  action: "keep" | "remove" | "recolor" | "reposition" | "swap";
   target: string;
   value?: string;
   isRefine?: boolean;
@@ -29,12 +29,15 @@ export type Plan = {
 
 export type SamResults = {
   connected: boolean;
-  boxes: { label: string; x: number; y: number; width: number; height: number }[];
+  boxes: { label: string; x: number; y: number; width: number; height: number; confidence: number }[];
   masks: { label: string; size: [number, number]; counts: number[] }[];
+  objects: { label: string; box: [number, number, number, number] | null; confidence: number }[];
+  rawEmpty?: boolean;
 };
 
 export type BatchRequest = {
   images: string[];
+  originalImages?: string[];
   text: string;
   existingPlan?: Plan;
   index?: number;
@@ -46,6 +49,8 @@ export type PerViewResult = {
   index: number;
   proposalUrl: string | null;
   samResults: SamResults | null;
+  appliedOperations?: Operation[];
+  skippedOperations?: Operation[];
   error?: string;
 };
 
@@ -60,99 +65,174 @@ export const MOCK_PLAN: Plan = {
   ],
 };
 
-function fallbackSam(operations: Operation[]): SamResults {
-  const positions = [
-    { x: 120, y: 180, width: 260, height: 190 },
-    { x: 560, y: 160, width: 200, height: 220 },
-    { x: 360, y: 450, width: 230, height: 150 },
-    { x: 760, y: 390, width: 170, height: 190 },
-  ];
-  return {
-    connected: false,
-    boxes: operations.map((operation, index) => ({
-      label: operation.target,
-      ...positions[index % positions.length],
-    })),
-    masks: [],
-  };
+function emptySam(): SamResults {
+  return { connected: false, boxes: [], masks: [], objects: [] };
 }
 
-/** Segment operation targets. If the optional SAM endpoint is unavailable, return labeled preview boxes. */
+/** Segment furniture in one image; offline results never invent object boxes. */
 export async function callSam(
-  operations: Operation[],
-  imageBase64?: string | null
+  imageBase64: string,
+  targetLabel: string,
+  sparkFallback: string[],
 ): Promise<SamResults> {
-  if (!KEY || !imageBase64) return fallbackSam(operations);
+  const apiKey = process.env.MODEL_API_KEY;
+  const baseUrl = process.env.MODEL_BASE_URL || "https://api.meta.ai/v1";
+  const samModel = process.env.SAM_MODEL || "sam-3.1";
+  if (!apiKey) return emptySam();
 
   try {
-    const response = await fetch(`${BASE}/sam`, {
+    const samImage = imageBase64.startsWith("data:") ? imageBase64 : `data:image/webp;base64,${imageBase64}`;
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/responses`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: SAM_MODEL,
-        image: imageBase64,
-        prompts: operations.slice(0, 4).map((operation) => operation.target),
+        model: samModel,
+        input: [{
+          role: "user",
+          content: [
+            { type: "input_text", text: targetLabel },
+            { type: "input_image", image_url: samImage, detail: "high" },
+          ],
+        }],
       }),
     });
-    if (!response.ok) return fallbackSam(operations);
+    if (!response.ok) {
+      console.error("SAM failed", response.status, (await response.text()).slice(0, 500));
+      return emptySam();
+    }
 
-    const data = await response.json();
-    const rawBoxes = Array.isArray(data?.boxes) ? data.boxes : [];
-    const boxes = rawBoxes.flatMap((box: Record<string, unknown>, index: number) => {
-      const bounds = Array.isArray(box.box) ? box.box : null;
-      const x = Number(box.x ?? bounds?.[0]);
-      const y = Number(box.y ?? bounds?.[1]);
-      const width = Number(box.width ?? (bounds ? Number(bounds[2]) - x : NaN));
-      const height = Number(box.height ?? (bounds ? Number(bounds[3]) - y : NaN));
-      if (![x, y, width, height].every(Number.isFinite)) return [];
-      return [{ label: String(box.label ?? box.prompt ?? operations[index]?.target ?? `Object ${index + 1}`), x, y, width, height }];
+    const responseData = await response.json();
+    const outputText = Array.isArray(responseData?.output)
+      ? responseData.output.flatMap((item: Record<string, unknown>) =>
+        Array.isArray(item.content)
+          ? item.content.flatMap((part: Record<string, unknown>) => typeof part.text === "string" ? [part.text] : [])
+          : [],
+      )[0] ?? ""
+      : typeof responseData?.output_text === "string" ? responseData.output_text : "";
+    if (!outputText.trim()) {
+      console.log(`SAM target "${targetLabel}" -> empty`);
+      return {
+        connected: true,
+        boxes: [],
+        masks: [],
+        objects: [{ label: targetLabel, box: null, confidence: 0 }, ...sparkFallback.map((label) => ({ label, box: null, confidence: 0.5 }))],
+        rawEmpty: true,
+      };
+    }
+
+    let parsedObjects: unknown[] = [];
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(outputText);
+      } catch {
+        const start = outputText.indexOf("[");
+        const end = outputText.lastIndexOf("]");
+        parsed = start >= 0 && end >= start ? JSON.parse(outputText.slice(start, end + 1)) : null;
+      }
+      if (Array.isArray(parsed) && parsed.length === 4 && parsed.every((value) => Number.isFinite(Number(value)))) {
+        parsedObjects = [{ label: targetLabel, box: parsed }];
+      } else if (Array.isArray(parsed)) parsedObjects = parsed;
+      else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { objects?: unknown[] }).objects)) {
+        parsedObjects = (parsed as { objects: unknown[] }).objects;
+      } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { box?: unknown[] }).box)) {
+        parsedObjects = [parsed];
+      } else {
+        throw new Error("SAM output did not contain objects with boxes");
+      }
+    } catch (error) {
+      const regexBoxes = Array.from(outputText.matchAll(/\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]/g)) as RegExpExecArray[];
+      parsedObjects = regexBoxes.map((match) => ({ label: targetLabel, box: match.slice(1).map(Number) }));
+      if (!parsedObjects.length) console.error(`SAM output parsing failed for target "${targetLabel}"`, error);
+    }
+    const boxes: SamResults["boxes"] = parsedObjects.flatMap((item: unknown) => {
+      if (!item || typeof item !== "object") return [];
+      const object = item as Record<string, unknown>;
+      const bounds = Array.isArray(object.box) ? object.box.map(Number) : [];
+      if (bounds.length !== 4 || !bounds.every(Number.isFinite)) return [];
+      const [xMin, yMin, xMax, yMax] = bounds;
+      const scale = Math.max(...bounds) <= 1000 ? 1000 : 1;
+      const x = xMin / scale * 1000;
+      const y = yMin / scale * 1000;
+      const width = (xMax - xMin) / scale * 1000;
+      const height = (yMax - yMin) / scale * 1000;
+      if (width <= 0 || height <= 0) return [];
+      const confidence = Number(object.confidence ?? object.score ?? 0);
+      return [{
+        label: String(object.label ?? targetLabel),
+        x,
+        y,
+        width,
+        height,
+        confidence: Number.isFinite(confidence) ? confidence : 0,
+      }];
     });
-    const rawMasks = Array.isArray(data?.masks) ? data.masks : [];
-    const masks = rawMasks.flatMap((mask: Record<string, unknown>, index: number) => {
-      const size = Array.isArray(mask.size) && mask.size.length === 2
-        ? [Number(mask.size[0]), Number(mask.size[1])] as [number, number]
-        : [768, 1024] as [number, number];
-      const counts = Array.isArray(mask.counts) ? mask.counts.map(Number) : [];
-      if (!counts.length) return [];
-      return [{ label: String(mask.label ?? operations[index]?.target ?? `Object ${index + 1}`), size, counts }];
-    });
-    return { connected: true, boxes, masks };
-  } catch {
-    return fallbackSam(operations);
+    const masks: SamResults["masks"] = [];
+    const objects = boxes.map((box) => ({ label: box.label, box: [box.x, box.y, box.width, box.height] as [number, number, number, number], confidence: box.confidence }));
+    console.log(`SAM target "${targetLabel}" ->`, boxes.length ? boxes.map((box) => [box.x, box.y, box.x + box.width, box.y + box.height]) : "empty");
+    return { connected: true, boxes, masks, objects };
+  } catch (error) {
+    console.error(`SAM request error for target "${targetLabel}"`, error);
+    return emptySam();
   }
 }
 
 const SPARK_SYSTEM = [
   "You are NookShift, an interior-redesign planner for renters.",
   "Return JSON only — no markdown fences, no prose.",
-  'Schema: {"goal": string, "constraints": string[], "operations": [{"action": "keep|remove|recolor|reposition", "target": string, "value": string}]}.',
+  'Schema: {"goal": string, "constraints": string[], "operations": [{"action": "keep|remove|recolor|reposition|swap", "target": string, "value": string}]}.',
+  "You MUST extract ALL distinct actions from the user request. Never drop recolor actions. If asked to recolor the left wall pink, the right wall blue, and move the sofa, return three separate operations: recolor left wall to pink, recolor right wall to blue, and reposition the existing sofa.",
+  "Recolor wall, ceiling, and floor operations are GLOBAL and apply to ALL views even if the surface is not detected. Do not mark global recolors as skippable.",
+  "Preservation instructions such as keeping the room layout, camera angle, windows, and other furniture unchanged belong in the constraints array, not as operations.",
   "Every operation target must be a concrete object visible in the room photo.",
   "If the user asks to move a sofa, interpret it as repositioning the existing sofa, never creating another one. For a two-seater sofa movement, use {\"action\":\"reposition\",\"target\":\"two-seater sofa\",\"value\":\"slightly right near fridge\"} when that matches the request.",
+  "If the user asks to swap the location of a two-seater sofa and three-seater sofa, use {\"action\":\"swap\",\"target\":\"two-seater sofa and three-seater sofa\",\"value\":\"swap positions\"}.",
   "Respect renter constraints: no structural changes, no drilling, keep beloved items.",
 ].join(" ");
 
-function parsePlan(raw: string): Plan {
+function parsePlan(raw: string, requestedText: string): Plan {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("Spark returned no JSON");
   const parsed = JSON.parse(raw.slice(start, end + 1));
   if (!parsed || !Array.isArray(parsed.operations)) throw new Error("Spark JSON missing operations");
+  let operations: Operation[] = parsed.operations.map((op: Record<string, string>) => ({
+    action: (["keep", "remove", "recolor", "reposition", "swap"].includes(op.action)
+      ? op.action
+      : "keep") as Operation["action"],
+    target: String(op.target ?? "unnamed object"),
+    value: op.value ? String(op.value) : undefined,
+  }));
+  const explicitWallColors = Array.from(requestedText.matchAll(/\b(left|right|front|back)\s+wall\s+(?:to\s+)?([a-z][a-z-]*)\b/gi));
+  if (explicitWallColors.length) {
+    operations = operations.filter((operation) => !(
+      operation.action === "recolor" && /^walls?$/i.test(operation.target.trim())
+    ));
+  }
+  for (const match of explicitWallColors) {
+    const target = `${match[1].toLowerCase()} wall`;
+    const value = match[2].toLowerCase();
+    if (!operations.some((operation) => operation.action === "recolor" && normalizeLabel(operation.target) === target && normalizeLabel(operation.value ?? "") === value)) {
+      operations.push({ action: "recolor", target, value });
+    }
+  }
+  const constraints = Array.isArray(parsed.constraints) ? parsed.constraints.map(String) : [];
+  const preservation = requestedText.match(/\bkeep\b[^.!?]*(?:unchanged|the same)\b/i)?.[0]?.trim();
+  if (preservation && !constraints.some((constraint: string) => normalizeLabel(constraint) === normalizeLabel(preservation))) {
+    constraints.push(preservation);
+  }
   return {
     goal: String(parsed.goal ?? "Redesign the room"),
-    constraints: Array.isArray(parsed.constraints)
-      ? parsed.constraints.map(String)
-      : [],
-    operations: parsed.operations.map((op: Record<string, string>) => ({
-      action: (["keep", "remove", "recolor", "reposition"].includes(op.action)
-        ? op.action
-        : "keep") as Operation["action"],
-      target: String(op.target ?? "unnamed object"),
-      value: op.value ? String(op.value) : undefined,
-    })),
+    constraints,
+    operations,
   };
+}
+
+function buildSparkPrompt(text: string): string {
+  return `Extract ALL distinct requested actions. Never omit or combine separate recolor actions. Example: "pink left wall, blue right wall, move sofa right" means 3 operations: recolor left wall pink, recolor right wall blue, reposition sofa right. Recolor wall, ceiling, and floor operations are global and apply to every view. Put preservation instructions such as keeping layout, camera angle, windows, and other furniture unchanged in constraints, never as operations. User request: ${text}`;
 }
 
 /** Reason over the (optional) room photo + user text -> strict plan JSON. */
@@ -160,7 +240,7 @@ export async function callSpark(text: string, imageBase64?: string | null): Prom
   if (!KEY) return MOCK_PLAN;
 
   const content: Record<string, unknown>[] = [
-    { type: "text", text: `User request: ${text}` },
+    { type: "text", text: buildSparkPrompt(text) },
   ];
   if (imageBase64) {
     content.push({ type: "image_url", image_url: { url: imageBase64 } });
@@ -184,7 +264,110 @@ export async function callSpark(text: string, imageBase64?: string | null): Prom
 
   if (!res.ok) throw new Error(`Spark ${res.status}: ${await res.text()}`);
   const data = await res.json();
-  return parsePlan(data?.choices?.[0]?.message?.content ?? "");
+  return parsePlan(data?.choices?.[0]?.message?.content ?? "", text);
+}
+
+export type VisibleObject = { label: string; confidence: number };
+
+/** Ask Spark to identify objects visible in one specific view, not the whole room. */
+export async function callSparkViewObjects(imageBase64: string): Promise<VisibleObject[]> {
+  if (!KEY) return [];
+  const response = await fetch(`${BASE}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: SPARK_MODEL,
+      temperature: 0,
+      messages: [
+        { role: "system", content: 'Inspect only the supplied room image. List all distinct objects visible in THIS specific room image. Return a JSON array of lowercase labels only, for example ["bed", "shelf"]. Include only visible objects and do not infer objects outside the frame.' },
+        { role: "user", content: [
+          { type: "text", text: "List all distinct objects visible in this specific room image." },
+          { type: "image_url", image_url: { url: imageBase64 } },
+        ] },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`Spark object detection ${response.status}: ${await response.text()}`);
+  const data = await response.json();
+  const raw = String(data?.choices?.[0]?.message?.content ?? "");
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start < 0 || end < start) throw new Error("Spark returned no object list");
+  const parsed = JSON.parse(raw.slice(start, end + 1));
+  if (!Array.isArray(parsed)) throw new Error("Spark object list is malformed");
+  return parsed.flatMap((object: unknown) => {
+    const label = typeof object === "string" ? object : (object as Record<string, unknown>)?.label;
+    if (typeof label !== "string" || !label.trim()) return [];
+    const confidence = typeof object === "string" ? 0.5 : Number((object as Record<string, unknown>).confidence ?? 0.5);
+    return [{ label: label.trim().toLowerCase(), confidence: Number.isFinite(confidence) ? confidence : 0.5 }];
+  });
+}
+
+/** Detect one image independently, using Spark labels when SAM returns no regions. */
+export async function detectObjectsForImage(
+  imageBase64: string,
+  operationTargets: string[],
+  viewIndex: number,
+): Promise<SamResults> {
+  const sparkObjects = await callSparkViewObjects(imageBase64).catch((error) => {
+    console.error("Spark object detection failed for view", viewIndex, error);
+    return [];
+  });
+  const targets = Array.from(new Set([
+    ...operationTargets,
+    "left wall",
+    "right wall",
+    "refrigerator",
+    "bed",
+  ].map((target) => target.trim()).filter(Boolean))).slice(0, 6);
+  const samByTarget = await Promise.all(targets.map((target) => callSam(imageBase64, target, sparkObjects.map((object) => object.label))));
+  const boxes = samByTarget.flatMap((result) => result.boxes);
+  const samLabels = boxes.map((box) => box.label);
+  const objects = Array.from(new Set([...samLabels, ...sparkObjects.map((object) => object.label)]))
+    .map((label) => ({ label, box: null, confidence: 0.5 }));
+  console.log("SAM per-target for view", viewIndex, targets, "got", boxes.length, "boxes", boxes);
+
+  return {
+    connected: samByTarget.some((result) => result.connected),
+    boxes,
+    masks: [],
+    objects,
+  };
+}
+
+function normalizeLabel(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+}
+
+/** Keep global surface changes and object actions whose targets are visible in this image. */
+export function filterOpsForView(operations: Operation[], samResults: SamResults): { applied: Operation[]; skipped: Operation[] } {
+  const labels = samResults.objects.map((object) => normalizeLabel(object.label));
+  const globalSurface = /\b(walls?|ceiling|floor)\b/i;
+  const isVisibleTarget = (target: string) => {
+    const normalized = normalizeLabel(target);
+    const targetHasSofa = /\bsofa\b/.test(normalized);
+    return labels.some((label) => {
+      if (label.includes(normalized) || normalized.includes(label)) return true;
+      if (targetHasSofa && /\b(sofa|seater|chairs?)\b/.test(label)) return true;
+      return normalized.split(" ").some((word) => word.length > 2 && label.includes(word));
+    });
+  };
+  const applied: Operation[] = [];
+  const skipped: Operation[] = [];
+  for (const operation of operations) {
+    if (operation.isRefine) {
+      applied.push(operation);
+      continue;
+    }
+    const parts = operation.action === "swap"
+      ? operation.target.split(/\s+(?:and|with)\s+|\s*<->\s*/i).map((part) => part.trim()).filter(Boolean)
+      : [operation.target];
+    const globalRecolor = operation.action === "recolor" && globalSurface.test(operation.target);
+    const objectPresenceFiltered = operation.action === "reposition" || operation.action === "swap";
+    const visible = globalRecolor || !objectPresenceFiltered || parts.every(isVisibleTarget);
+    (visible ? applied : skipped).push(operation);
+  }
+  return { applied, skipped };
 }
 
 function extractImage(data: unknown): string | null {
@@ -240,6 +423,10 @@ export async function callImage(
 export function planToPrompt(plan: Plan, userText: string): string {
   const ops = plan.operations
     .map((op) => {
+      if (op.action === "swap") {
+        const targets = op.target.split(/\s+(?:and|with)\s+|\s*<->\s*/i).map((target) => target.trim()).filter(Boolean);
+        return `swap positions of ${targets.join(" and ")}, preserving each existing item and not creating duplicates`;
+      }
       const v = op.value ? ` (${op.value})` : "";
       return `${op.action}: ${op.target}${v}`;
     })

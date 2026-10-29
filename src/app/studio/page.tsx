@@ -346,6 +346,10 @@ export default function StudioPage() {
   };
 
   const operationFromRefineInstruction = (instruction: string): Operation => {
+    const swapMatch = /swap\s+(?:the\s+)?(?:location of\s+)?(?:the\s+)?(.+?)\s+(?:with|and)\s+(?:the\s+)?(.+?)[.!?]?$/i.exec(instruction);
+    if (swapMatch) {
+      return { action: "swap", target: `${swapMatch[1].trim()} and ${swapMatch[2].trim()}`, value: "swap positions", isRefine: true };
+    }
     const removeMatch = /(?:remove|delete|take out|get rid of)\s+(?:the\s+)?(.+?)(?:\s+that was added)?[.!?]?$/i.exec(instruction);
     if (removeMatch) {
       return { action: "remove", target: removeMatch[1].trim(), value: instruction, isRefine: true };
@@ -380,6 +384,7 @@ export default function StudioPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           images: [activeView.image],
+          originalImages: images.map((view) => view.image),
           text: editedPrompt,
           existingPlan: activePlan,
           operations: combinedOperations,
@@ -620,12 +625,18 @@ export default function StudioPage() {
                 <p className="text-sm font-bold text-primary dark:text-white">
                   Plan — {activePlan.goal}
                 </p>
+                {activeResult && (
+                  <p className="mt-1 font-serif text-[15px] leading-[1.6] text-slate-600 dark:text-slate-300">
+                    {activeResult.appliedOperations?.length ?? 0} {activeResult.appliedOperations?.length === 1 ? "operation" : "operations"} will be applied to this view
+                    {(activeResult.skippedOperations?.length ?? 0) > 0 && ` (${activeResult.skippedOperations!.length} skipped - object not in this view)`}.
+                  </p>
+                )}
                 <div className="mt-2 flex items-center justify-between gap-3">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{activeResult?.samResults?.connected ? `SAM connected · ${activeResult.samResults.boxes.length} objects detected` : `Objects from plan: ${activeResult?.samResults?.boxes.length ?? 0}`}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{activeResult?.samResults?.connected ? `SAM connected · ${activeResult.samResults.objects.length} objects detected` : `Objects identified in this view: ${activeResult?.samResults?.objects.length ?? 0}`}</p>
                   <Button variant="ghost" size="sm" disabled={step !== null} onClick={() => editingPlan ? regenerateEditedPlan() : setEditingPlan(true)}>{step === "refine" ? "Refining proposal..." : step === "image" ? "Re-generating..." : editingPlan ? "Done editing" : "Edit plan"}</Button>
                 </div>
                 {activePlan.constraints.length > 0 && (
-                  <p className="mt-0.5 text-xs italic text-slate-500 dark:text-slate-400">
+                    <p className="mt-0.5 font-serif text-[15px] italic leading-[1.6] text-slate-500 dark:text-slate-400">
                     {activePlan.constraints.join(" · ")}
                   </p>
                 )}
@@ -633,7 +644,7 @@ export default function StudioPage() {
                   {activePlan.operations.map((op, i) => (
                     <li
                       key={i}
-                      className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-3 py-2 text-sm dark:bg-night"
+                      className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-3 py-2 font-serif text-[15px] leading-[1.6] dark:bg-night"
                     >
                       <span
                         className={cn(
@@ -647,7 +658,7 @@ export default function StudioPage() {
                       </span>
                       {editingPlan ? <>
                         <select aria-label={`Operation ${i + 1} action`} value={op.action} onChange={(event) => updateOperation(i, { action: event.target.value as Operation["action"] })} className="rounded border border-slate-200 bg-white px-1 py-1 text-xs dark:border-white/10 dark:bg-night2">
-                          {["keep", "remove", "recolor", "reposition"].map((action) => <option key={action} value={action}>{action}</option>)}
+                            { ["keep", "remove", "recolor", "reposition", "swap"].map((action) => <option key={action} value={action}>{action}</option>)}
                         </select>
                         <Input aria-label={`Operation ${i + 1} target`} value={op.target} onChange={(event) => updateOperation(i, { target: event.target.value })} className="h-8 min-w-24 flex-1 text-xs" />
                         <Input aria-label={`Operation ${i + 1} value`} value={op.value ?? ""} onChange={(event) => updateOperation(i, { value: event.target.value || undefined })} placeholder="Value (optional)" className="h-8 min-w-24 flex-1 text-xs" />
@@ -687,8 +698,8 @@ export default function StudioPage() {
                       )}
                     </section>
                   )}
-                {activeResult?.samResults?.boxes.length ? <ul className="mt-2 flex flex-wrap gap-2" aria-label="Detected objects">
-                  {activeResult.samResults.boxes.map((box, index) => <li key={`${box.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">{box.label}</li>)}
+                {activeResult?.samResults?.objects.length ? <ul className="mt-2 flex flex-wrap gap-2" aria-label="Detected objects in active view">
+                  {activeResult.samResults.objects.map((object, index) => <li key={`${object.label}-${index}`} className="rounded-full bg-surface px-2.5 py-1 text-xs text-primary dark:bg-night">{object.label}</li>)}
                 </ul> : null}
               </div>
               {activeResult?.proposalUrl && <BeforeAfterSlider before={activeView.image} after={proposalSrc} afterLabel="Generated proposal" />}

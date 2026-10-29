@@ -50,16 +50,45 @@ export function Dropzone({ images, activeImage, samResults, dragging, fileInputR
         <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} transition={{ duration: 0.35 }} className="relative w-full max-w-lg overflow-hidden rounded-xl shadow-key">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={activeImage} alt="Your space, active view" className="block w-full" />
-          {samResults?.boxes.map((box, index) => (
-            <span
-              key={`${box.label}-${index}`}
-              className="absolute flex max-w-[45%] items-start gap-1 text-[10px] font-bold text-white"
-              style={{ left: `${(box.x / 1024) * 100}%`, top: `${(box.y / 768) * 100}%` }}
-            >
-              <span className="mt-0.5 size-2 shrink-0 rounded-full bg-link ring-2 ring-white" />
-              <span className="rounded bg-primary/85 px-1.5 py-0.5">{box.label}</span>
-            </span>
-          ))}
+          <motion.div
+            key={samResults?.objects.map((object) => object.label).join("|") ?? "no-objects"}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3 }}
+            className="absolute inset-0 pointer-events-none"
+            aria-label={`${samResults?.objects.length ?? 0} detected objects`}
+          >
+            {(samResults?.connected ? samResults.boxes : []).map((box, index) => (
+              <span
+                key={`${box.label}-${index}`}
+                className="absolute border-2 border-lime-400"
+                style={{
+                  left: `${box.x / 10}%`,
+                  top: `${box.y / 10}%`,
+                  width: `${box.width / 10}%`,
+                  height: `${box.height / 10}%`,
+                }}
+              >
+                <span className="absolute left-0 top-0 -translate-y-full whitespace-nowrap rounded bg-lime-500 px-1.5 py-0.5 text-[10px] font-bold text-black">{box.label}</span>
+              </span>
+            ))}
+            {samResults?.connected && samResults.boxes.length === 0 && samResults.objects.length > 0 && (
+              <span className="absolute left-2 top-9 flex max-w-[calc(100%-1rem)] flex-wrap gap-1.5" aria-label="SAM labels without parsed boxes">
+                {samResults.objects.map((object, index) => (
+                  <span key={`${object.label}-${index}`} title={object.label} className="size-2 rounded-full bg-lime-300 ring-1 ring-white" />
+                ))}
+              </span>
+            )}
+          </motion.div>
+          <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2.5 py-1 text-xs font-semibold text-white">
+            {samResults?.connected
+              ? samResults.boxes.length
+                ? `${samResults.objects.length} objects`
+                : `SAM connected · ${samResults.objects.length} objects · boxes pending parser`
+              : samResults?.objects.length
+                ? `Objects: ${samResults.objects.length} detected (Spark list, SAM retrying)`
+                : "SAM offline - Spark object list unavailable"}
+          </span>
           <div className="absolute right-2 top-2 flex gap-2">
             <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-full bg-black/65 px-3 py-1 text-xs font-bold text-white">Add views</button>
             <button type="button" onClick={onClear} aria-label="Clear uploaded images" className="rounded-full bg-black/65 p-1.5 text-white"><Trash2 className="size-4" /></button>

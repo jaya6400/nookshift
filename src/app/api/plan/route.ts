@@ -3,6 +3,8 @@ import {
   callSpark,
   callImage,
   callSam,
+  detectObjectsForImage,
+  filterOpsForView,
   planToPrompt,
   MOCK_PLAN,
   type Plan,
@@ -23,7 +25,7 @@ export const maxDuration = 60;
  * Image failure is non-fatal (proposalUrl: null, client shows stylized preview).
  */
 export async function POST(req: Request) {
-  let body: { image?: string; imageBase64?: string; images?: string[]; text?: string; operations?: Operation[]; isEdit?: boolean; isRefine?: boolean; existingPlan?: Plan; index?: number };
+  let body: { image?: string; imageBase64?: string; images?: string[]; originalImages?: string[]; text?: string; operations?: Operation[]; isEdit?: boolean; isRefine?: boolean; existingPlan?: Plan; index?: number };
   try {
     body = await req.json();
   } catch {
@@ -56,8 +58,11 @@ export async function POST(req: Request) {
       if (images.length !== 1 || !body.existingPlan || !Array.isArray(body.operations) || !Number.isInteger(body.index) || index < 0 || index > 2) {
         return NextResponse.json({ error: "Refinement requires one image, an index, existingPlan, and operations" }, { status: 400 });
       }
+      if (!Array.isArray(body.originalImages) || typeof body.originalImages[index] !== "string") {
+        return NextResponse.json({ error: "Refinement requires the original image set and a valid indexed source" }, { status: 400 });
+      }
       const operations = body.operations.filter((operation) =>
-        ["keep", "remove", "recolor", "reposition"].includes(operation.action) &&
+        ["keep", "remove", "recolor", "reposition", "swap"].includes(operation.action) &&
         typeof operation.target === "string" && operation.target.trim().length > 0
       );
       plan = { ...body.existingPlan, goal: text, operations };
@@ -72,26 +77,38 @@ export async function POST(req: Request) {
       }
     }
 
+    console.log("SAM env check", !!process.env.MODEL_API_KEY, process.env.MODEL_BASE_URL || "https://api.meta.ai/v1", process.env.SAM_MODEL || "sam-3.1");
+    const operationTargets = plan.operations.map((operation) => operation.target);
+
     const processView = async (imageBase64: string, resultIndex: number) => {
       let samResults: SamResults | null = null;
       let proposalUrl: string | null = null;
       let error: string | undefined;
       try {
-        samResults = await callSam(plan.operations, imageBase64);
+        samResults = await detectObjectsForImage(imageBase64, operationTargets, resultIndex);
       } catch (err) {
         error = err instanceof Error ? err.message : "SAM analysis failed for this view.";
       }
+      const { applied, skipped } = filterOpsForView(plan.operations, samResults ?? {
+        connected: false,
+        boxes: [],
+        masks: [],
+        objects: [],
+      });
+      const viewPlan: Plan = { ...plan, operations: applied };
       try {
-        proposalUrl = await callImage(planToPrompt(plan, text), imageBase64);
+        proposalUrl = await callImage(planToPrompt(viewPlan, text), imageBase64);
         if (!proposalUrl) error ??= "Proposal generation returned no image for this view.";
       } catch (err) {
         error = err instanceof Error ? err.message : "Proposal generation failed for this view.";
       }
-      return { index: resultIndex, proposalUrl, samResults, ...(error ? { error } : {}) };
+      return { index: resultIndex, proposalUrl, samResults, appliedOperations: applied, skippedOperations: skipped, ...(error ? { error } : {}) };
     };
 
+    const sourceImage = body.isRefine ? body.originalImages![index] : images[0];
+    if (body.isRefine) console.log("Refine using original image, not generated, for index", index);
     const results = isRetry || body.isRefine
-      ? [await processView(images[0], index)]
+      ? [await processView(sourceImage, index)]
       : await Promise.all(images.map((image, resultIndex) => processView(image, resultIndex)));
     return NextResponse.json({ plan, results });
   }
@@ -103,7 +120,7 @@ export async function POST(req: Request) {
     let plan: Plan;
     if (body.isEdit && Array.isArray(body.operations)) {
       const operations = body.operations.filter((operation) =>
-        ["keep", "remove", "recolor", "reposition"].includes(operation.action) &&
+        ["keep", "remove", "recolor", "reposition", "swap"].includes(operation.action) &&
         typeof operation.target === "string" && operation.target.trim().length > 0
       );
       plan = {
@@ -120,7 +137,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const samResults = await callSam(plan.operations, imageBase64);
+    const samResults = await callSam(imageBase64 ?? "", plan.operations[0]?.target ?? "furniture", []);
 
     // Image — failure must not kill the plan.
     let proposalUrl: string | null = null;
@@ -142,7 +159,7 @@ export async function POST(req: Request) {
     console.error("/api/plan failed:", err);
     const fallback = {
       plan: MOCK_PLAN,
-      samResults: await callSam(MOCK_PLAN.operations, imageBase64),
+      samResults: await callSam(imageBase64 ?? "", MOCK_PLAN.operations[0]?.target ?? "furniture", []),
       proposalUrl: null,
       error: "Planning service unavailable; showing a starter plan.",
     };
