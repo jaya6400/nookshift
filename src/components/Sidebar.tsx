@@ -10,6 +10,7 @@ type SidebarProps = {
   name: string;
   initial: string;
   collapsed: boolean;
+  reducedMotion: boolean;
   canEditPlan: boolean;
   onEditProfile: () => void;
   onShowHelp: () => void;
@@ -22,6 +23,7 @@ export function Sidebar({
   name,
   initial,
   collapsed,
+  reducedMotion,
   canEditPlan,
   onEditProfile,
   onShowHelp,
@@ -30,7 +32,7 @@ export function Sidebar({
   onShowSamples,
 }: SidebarProps) {
   return (
-    <motion.aside variants={{ hidden: { opacity: 0, x: -14 }, visible: { opacity: 1, x: 0 } }} transition={{ duration: 0.4 }} className={cn(
+    <motion.aside initial={{ opacity: 0, x: reducedMotion ? 0 : -80 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: reducedMotion ? 0 : 0.5, ease: "easeOut" }} className={cn(
       "relative hidden min-h-[720px] flex-col rounded-2xl border border-slate-100 bg-white p-4 pb-24 shadow-key transition-all duration-200 dark:border-white/5 dark:bg-night2 md:flex",
       collapsed ? "w-16 items-center" : "w-[20%] min-w-52"
     )}>

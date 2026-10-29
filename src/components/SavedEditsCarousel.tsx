@@ -35,12 +35,13 @@ export function SavedEditsCarousel() {
   return (
     <motion.section
       id="saved-edits"
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-100px" }}
+      initial={{ opacity: 0.6, y: 20, filter: "blur(2px)" }}
+      whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+      viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }}
       transition={{ duration: 0.5, ease: "easeOut" }}
-      className="mx-auto mb-16 mt-8 max-w-7xl px-4 sm:px-6"
+      className="relative mx-auto mb-16 mt-8 max-w-7xl px-4 sm:px-6"
     >
+      <motion.div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 bg-[#F1FF5E]/5 blur-2xl" initial={{ opacity: 0 }} whileInView={{ opacity: [0, 1, 0] }} viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }} transition={{ duration: 0.2 }} />
       <h2 className="mb-4 text-2xl font-bold text-primary dark:text-white">Saved edits</h2>
       {edits.length === 0 ? (
         <div className="flex min-h-56 flex-col items-center justify-center gap-3 bg-[#EFF6FF] px-6 py-12 text-center dark:bg-night2">

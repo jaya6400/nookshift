@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ArrowLeft, Check, CircleHelp, ImagePlus, Loader2, Mic, Minus, Save, UserRound, Wand2 } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -487,6 +487,7 @@ export default function StudioPage() {
           name={displayName}
           initial={initial}
           collapsed={collapsed}
+          reducedMotion={Boolean(prefersReducedMotion)}
           canEditPlan={phase === "result" && Boolean(plan)}
           onEditProfile={() => {
             setDraftName(name ?? "");
@@ -502,7 +503,8 @@ export default function StudioPage() {
         />
 
         {/* ===== Center canvas ===== */}
-        <motion.section variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0 } }} transition={{ duration: 0.45 }} className="min-w-0 flex-1 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 sm:p-6">
+        <section className="relative min-w-0 flex-1 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 sm:p-6">
+          <motion.div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 rounded-2xl bg-[#F1FF5E]/5 blur-2xl" initial={{ opacity: 0 }} whileInView={{ opacity: [0, 1, 0] }} viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }} transition={{ duration: 0.2 }} />
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-primary dark:text-white">
               Workspace Canvas
@@ -525,24 +527,28 @@ export default function StudioPage() {
           )}
 
           {/* Dropzone / preview — scales up while dragging */}
-          <motion.div
-            key={activeView?.id ?? "empty"}
-            initial={{ opacity: 0, x: prefersReducedMotion ? 0 : 10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: prefersReducedMotion ? 0 : 0.3 }}
-          >
-            <Dropzone
-              images={images.map((view) => view.image)}
-              activeImage={activeView?.image ?? null}
-              samResults={activeResult?.samResults ?? null}
-              dragging={dragging}
-              fileInputRef={fileRef}
-              onFiles={onFiles}
-              onDraggingChange={setDragging}
-              onShowSamples={showSamples}
-              onClear={() => { setImages([]); setActiveIndex(0); setPhase("idle"); setPlan(null); setGenerationError(""); setUploadError(""); }}
-            />
-          </motion.div>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeView?.id ?? "empty"}
+              initial={{ opacity: 0.9, y: prefersReducedMotion ? 0 : -10, x: prefersReducedMotion ? 0 : -10 }}
+              whileInView={{ opacity: 1, y: 0, x: 0 }}
+              exit={{ opacity: 0.9, y: prefersReducedMotion ? 0 : -10, x: prefersReducedMotion ? 0 : -10 }}
+              viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }}
+              transition={{ duration: prefersReducedMotion ? 0 : 0.5, ease: "easeOut" }}
+            >
+              <Dropzone
+                images={images.map((view) => view.image)}
+                activeImage={activeView?.image ?? null}
+                samResults={activeResult?.samResults ?? null}
+                dragging={dragging}
+                fileInputRef={fileRef}
+                onFiles={onFiles}
+                onDraggingChange={setDragging}
+                onShowSamples={showSamples}
+                onClear={() => { setImages([]); setActiveIndex(0); setPhase("idle"); setPlan(null); setGenerationError(""); setUploadError(""); }}
+              />
+            </motion.div>
+          </AnimatePresence>
           {uploadError && <p className="mt-2 text-center text-xs font-semibold text-red-600" role="alert">{uploadError}</p>}
 
           {/* Idea input */}
@@ -614,7 +620,7 @@ export default function StudioPage() {
 
           {/* Live result: banner + Spark checklist + real before/after */}
           {phase === "result" && activeView && activePlan && (
-            <motion.div key={`result-${activeView.id}`} initial={{ opacity: 0, x: prefersReducedMotion ? 0 : 10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: prefersReducedMotion ? 0 : 0.3 }} className="mt-6 space-y-4">
+            <motion.div initial={{ opacity: 0.6, y: prefersReducedMotion ? 0 : 20 }} whileInView={{ opacity: 1, y: 0 }} exit={{ opacity: 0.6, y: prefersReducedMotion ? 0 : 20 }} viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }} transition={{ duration: prefersReducedMotion ? 0 : 0.5, ease: "easeOut", delay: prefersReducedMotion ? 0 : 0.15 }} className="mt-6 space-y-4">
               {(generationError || activeView.status === "error") && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 dark:bg-red-950/30 dark:text-red-300">
                   <span>{activeResult?.error ?? generationError ?? "Generation failed for this view."}</span>
@@ -712,7 +718,7 @@ export default function StudioPage() {
               </div>
             </motion.div>
           )}
-        </motion.section>
+        </section>
 
         {/* ===== Right panel (desktop) — Quick Tips only, no profile ===== */}
         <motion.aside variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0 } }} transition={{ duration: 0.45, delay: 0.1 }} className="hidden w-[20%] min-w-60 flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-key dark:border-white/5 dark:bg-night2 lg:flex">

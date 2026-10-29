@@ -2,45 +2,57 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { motion } from "framer-motion";
+import { motion, useScroll, useTransform } from "framer-motion";
+import { useRef } from "react";
 import { ArrowRight, Play } from "lucide-react";
 import { Header } from "@/components/Header";
 import { SavedEditsCarousel } from "@/components/SavedEditsCarousel";
 import { SAMPLES } from "@/lib/samples";
 
 export default function LandingPage() {
+  const heroRef = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
+  const heroOpacity = useTransform(scrollYProgress, [0, 0.25], [1, 0.85]);
+  const heroY = useTransform(scrollYProgress, [0, 0.25], [0, -10]);
+
   return (
     <div className="flex min-h-screen flex-col">
       <Header />
 
       <main className="flex-1">
         {/* ---------- Hero (fade-in) ---------- */}
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.6, ease: "easeOut" }}
-          className="mx-auto max-w-7xl px-4 pb-2 pt-12 text-center sm:px-6 sm:pt-16"
+        <motion.section
+          ref={heroRef}
+          initial={{ opacity: 1, y: 20, filter: "blur(4px)" }}
+          whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className="relative mx-auto flex min-h-[calc(70vh-3.5rem)] max-w-7xl flex-col justify-center px-4 pb-12 pt-12 text-center sm:px-6 sm:pt-16"
         >
-          <h1 className="text-4xl font-bold leading-tight text-primary dark:text-white sm:text-5xl md:text-6xl">
-            Want to redefine your room, before moving a single chair?
-          </h1>
-          <p className="mx-auto mt-4 max-w-xl text-lg italic text-slate-600 dark:text-slate-300">
-            NookShift is here for you. See First, Analyze the Feel, Then Change
-          </p>
-        </motion.div>
+          <motion.div className="relative" style={{ opacity: heroOpacity, y: heroY }}>
+            <h1 className="text-4xl font-bold leading-tight text-primary dark:text-white sm:text-5xl md:text-6xl">
+              Want to redefine your room, before moving a single chair?
+            </h1>
+            <p className="mx-auto mt-4 max-w-xl text-lg italic text-slate-600 dark:text-slate-300">
+              NookShift is here for you. See First, Analyze the Feel, Then Change
+            </p>
+          </motion.div>
+          <motion.div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 bg-[#F1FF5E]/5 blur-2xl" initial={{ opacity: 0 }} whileInView={{ opacity: [0, 1, 0] }} viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }} transition={{ duration: 0.2 }} />
+        </motion.section>
 
         {/* ---------- Middle pale-blue card ---------- */}
         <motion.section
           id="catalog"
-          initial={{ opacity: 0, y: 24, scale: 0.98 }}
-          whileInView={{ opacity: 1, y: 0, scale: 1 }}
-          viewport={{ once: true, margin: "-100px" }}
+          initial={{ opacity: 1, y: 20, filter: "blur(0px)" }}
+          whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }}
           transition={{ duration: 0.5, ease: "easeOut" }}
-          className="mx-auto mt-11 mb-16 max-w-7xl px-4 pt-11 sm:px-6"
+          className="relative mx-auto mb-16 mt-0 max-w-7xl px-4 pt-0 sm:px-6"
         >
+          <motion.div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 bg-[#F1FF5E]/5 blur-2xl" initial={{ opacity: 0 }} whileInView={{ opacity: [0, 1, 0] }} viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }} transition={{ duration: 0.2 }} />
           <div className="card-surface grid gap-8 rounded-2xl p-6 sm:p-8 md:grid-cols-5">
             {/* Transform preview — 60% */}
-            <div className="md:col-span-3">
+            <motion.div className="md:col-span-3" initial={{ opacity: 0.6, y: 20, filter: "blur(2px)" }} whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }} viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }} transition={{ duration: 0.5, ease: "easeOut" }}>
               <h2 className="text-base font-bold text-primary dark:text-white">
                 See your space transform in seconds
               </h2>
@@ -73,10 +85,10 @@ export default function LandingPage() {
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
 
             {/* Inspiration Catalogue — 40% */}
-            <div className="flex flex-col md:col-span-2">
+            <motion.div className="flex flex-col md:col-span-2" initial={{ opacity: 0.6, y: 20, filter: "blur(2px)" }} whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }} viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }} transition={{ duration: 0.5, ease: "easeOut", delay: 0.15 }}>
               <h2 className="text-base font-bold text-primary dark:text-white">
                 Inspiration Catalogue
               </h2>
@@ -87,9 +99,9 @@ export default function LandingPage() {
                 className="mt-4 grid grid-cols-3 gap-3"
                 initial="hidden"
                 whileInView="visible"
-                viewport={{ once: true, margin: "-100px" }}
+                viewport={{ once: false, amount: 0.2, margin: "-5% 0px -5% 0px" }}
                 variants={{
-                  hidden: {},
+                  hidden: { transition: { staggerChildren: 0.04, staggerDirection: -1 } },
                   visible: { transition: { staggerChildren: 0.1 } },
                 }}
               >
@@ -97,7 +109,7 @@ export default function LandingPage() {
                   <motion.div
                     key={s.id}
                     variants={{
-                      hidden: { opacity: 0, y: 20, scale: 0.95 },
+                      hidden: { opacity: 0.6, y: 20 },
                       visible: { opacity: 1, y: 0, scale: 1 },
                     }}
                     transition={{ duration: 0.5, ease: "easeOut" }}
@@ -136,7 +148,7 @@ export default function LandingPage() {
               <p className="mt-3 text-sm text-center text-slate-500 dark:text-slate-300">
                 Your designs will be saved here. For your comeback.
               </p>
-            </div>
+            </motion.div>
           </div>
         </motion.section>
         <SavedEditsCarousel />
