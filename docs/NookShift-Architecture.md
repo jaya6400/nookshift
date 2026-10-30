@@ -176,3 +176,11 @@ The architecture checklist is the status source of truth. README summarizes thes
 - New_Screen_1.png (fixed wireframe)
 - New_Screen.png (first export for comparison)
 - Original paper sketch design-nook-shift.jpg if you want
+
+## 11. Image Proposal Troubleshooting
+
+- Reproduced the layout-drift issue locally with the real India 1BHK room sample and the prompt “Make left wall pink, right wall blue.” Confirmed the planning route receives each original view and uses Muse Image edits with the source image, rather than relying on the landing-page video change.
+- Updated image-edit prompt assembly to use Spark operations and constraints with explicit instructions to preserve the room layout, camera angle, windows, and other furniture. Kept uploads at a 1024px longest edge and WebP quality 0.85, and passed source dimensions to the edit request to preserve each view's aspect ratio.
+- Compared all three views independently. Found that SAM may return a mask for only one wall in a narrow view, or return a wall mask whose box is on the opposite side from the requested left/right wall. Per-view filtering now checks mask presence and horizontal position; it applies only detected surfaces and skips surfaces not present in that view.
+- Removed subtraction of unrelated object masks from wall masks after logs showed that overlapping masks could erase all allowed recolor pixels. Added a retry for missing surface masks and retained a clear error when an applied recolor target has no usable mask.
+- Validated the three-view request against an isolated production build: all three views returned proposals; the two wider views applied both wall recolors, while the narrow mandir view applied the detected left-wall recolor and skipped the absent right wall. This confirms per-view handling, but SAM mask coverage can still make a recolor partial; the model does not guarantee full-wall coverage.
