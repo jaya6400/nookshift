@@ -3,17 +3,34 @@
 import Link from "next/link";
 import Image from "next/image";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { useRef } from "react";
-import { ArrowRight, Play } from "lucide-react";
+import { useRef, useState } from "react";
+import { ArrowRight, Pause, Play } from "lucide-react";
 import { Header } from "@/components/Header";
 import { SavedEditsCarousel } from "@/components/SavedEditsCarousel";
 import { SAMPLES } from "@/lib/samples";
 
 export default function LandingPage() {
   const heroRef = useRef<HTMLElement>(null);
+  const promoVideoRef = useRef<HTMLVideoElement>(null);
+  const [isPromoPlaying, setIsPromoPlaying] = useState(false);
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
   const heroOpacity = useTransform(scrollYProgress, [0, 0.25], [1, 0.85]);
   const heroY = useTransform(scrollYProgress, [0, 0.25], [0, -10]);
+
+  const togglePromoPlayback = async () => {
+    const video = promoVideoRef.current;
+    if (!video) return;
+
+    if (video.paused) {
+      try {
+        await video.play();
+      } catch {
+        setIsPromoPlaying(false);
+      }
+    } else {
+      video.pause();
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -59,31 +76,30 @@ export default function LandingPage() {
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                 Upload, describe vibe, watch grounding in real masks
               </p>
-              {/*
-                Phase 0: stylized placeholder. Final: replace with an
-                auto-playing, muted, looping workspace-interaction video.
-              */}
-              <div className="mt-4 flex aspect-video items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-link/50 bg-surface2/40 dark:border-link/40 dark:bg-white/5">
-                <div className="relative flex h-full w-full items-center justify-center">
-                  <Image
-                    src="/samples/room-1.png"
-                    alt="Workspace preview"
-                    fill
-                    className="object-cover opacity-80 dark:opacity-60"
-                    priority
-                  />
-                  <div className="relative flex flex-col items-center gap-2 rounded-2xl bg-white/85 px-6 py-4 text-center shadow-key backdrop-blur dark:bg-night/85">
-                    <span className="flex size-12 items-center justify-center rounded-full bg-primary text-white shadow-key">
-                      <Play className="ml-0.5 size-5" fill="currentColor" />
-                    </span>
-                    <p className="text-sm font-bold text-primary dark:text-white">
-                      Auto-play workspace loop
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-300">
-                      Coming with final demo assets
-                    </p>
-                  </div>
-                </div>
+              <div className="relative mt-4 aspect-video overflow-hidden rounded-2xl bg-black">
+                <video
+                  ref={promoVideoRef}
+                  src="/promo.mp4"
+                  poster="/samples/room-3.png"
+                  muted
+                  playsInline
+                  onPlay={() => setIsPromoPlaying(true)}
+                  onPause={() => setIsPromoPlaying(false)}
+                  onEnded={() => setIsPromoPlaying(false)}
+                  className="size-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={togglePromoPlayback}
+                  aria-label={isPromoPlaying ? "Pause promo video" : "Play promo video"}
+                  className="absolute left-1/2 top-1/2 flex size-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-primary shadow-key transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+                >
+                  {isPromoPlaying ? (
+                    <Pause className="size-6" fill="currentColor" />
+                  ) : (
+                    <Play className="ml-1 size-6" fill="currentColor" />
+                  )}
+                </button>
               </div>
             </motion.div>
 

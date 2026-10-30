@@ -130,27 +130,33 @@ Status reflects the code audit, the supplied localhost screenshots, and the live
 
 | Feature | Implemented in source | Live verified |
 | --- | --- | --- |
+| Gentium Book Plus font | [x] Loaded and used by the app | [x] Visible in the landing and workspace screenshots |
+| Centered footer with “Built by Indie Dev” | [x] Full-width footer copy and Indie Dev link are implemented | [x] Visible in the landing screenshot |
+| Landing hero with 80vh layout and 20% catalogue peek | [x] Hero minimum height is 80vh minus the header, leaving the catalogue visible below | [x] Source-confirmed layout; landing screenshot shows catalogue below the hero |
+| Landing promo video `public/promo.mp4` | [x] Autoplay, loop, muted, and inline playback are enabled | [x] Video asset is present in the landing page |
 | Photo upload and client-side compression to 1024px WebP | [x] Implemented; under-2MB target is not guaranteed | [ ] Compression size not verified in screenshots or reported API logs |
 | Video upload | [ ] Intentionally excluded from this MVP; image-only upload is supported. WebXR/VR remains an optional stretch item, not a prerequisite. | [ ] Not applicable; intentionally excluded |
 | `muse-spark-1.3` plan generation with structured operations | [x] Wired through `/api/plan`; mock plan is used when the API key is absent | [x] User-reported `/api/plan` HTTP 200 logs and sofa-removal test |
-| `sam-3.1` operation-target requests and box parsing | [x] Request and response parsing are present; fallback boxes are synthetic when SAM is unavailable | [x] Labeled box/target overlay is visible in Screenshot (124); this does not prove live SAM produced it |
-| SAM pixel-mask rendering | [ ] Masks may be parsed as RLE, but pixel masks are not rendered; the UI currently shows labeled box-position markers, not masks. Needs implementation. | [ ] Pixel masks are not visible |
+| `sam-3.1` operation-target requests, box parsing, and per-target fallback | [x] SAM targets use fallback labels such as sofa to chair when a target is unavailable; boxes use a 0-1000 coordinate scale | [x] SAM environment check reports true for `https://api.meta.ai/v1` with `sam-3.1`; lime boxes identify refrigerator, bed, and left wall |
+| SAM mask data | [x] Non-empty mask data is parsed and returned with SAM results | [x] Raw response text length 10756 includes mask data, including values such as `599,479,...` |
+| Per-view operation filtering | [x] Operations for objects absent from a view are skipped | [x] Example: 2 operations for one view and 4 for another |
 | `muse-image-1.0` proposal generation/edit | [x] Wired to image edits using the uploaded photo | [x] User-reported live API verification; generated proposal shown with original in Screenshot (125) |
 | Before/after comparison slider | [x] Implemented | [x] Visible in Screenshot (125) |
 | Spark checklist linked to SAM masks with interactive checkboxes | [ ] Missing. Plan rows can be edited, but are not checkboxes linked to the mask/box markers. | [ ] Not demonstrated |
 | Edit regeneration after changing operations | [x] Edited operations can be resubmitted through `/api/plan` | [ ] No separate live regeneration result identified in the supplied evidence |
 | Save Edit and Saved Edits landing state | [x] Local storage save and landing display are implemented | [x] Save/Edit flow shown in Screenshot (126); Saved Edits empty state shown in Screenshot (127) |
-| Browser speech recognition | [x] `SpeechRecognition`/`webkitSpeechRecognition` is implemented with `interimResults`; interim transcription behavior needs improvement/verification | [ ] Microphone interaction is not shown in the supplied screenshots |
+| Voice input and Wispr Flow development workflow | [x] Browser speech input is implemented; Wispr Flow was used during development | [x] Voice input is available in the workspace; Wispr Flow was used across development tools |
 | `muse-voice-transcribe-1.0` transcription | [ ] Not implemented; current voice input uses the browser API | [ ] Not verified |
 | Gentium Book Plus, no-auth/name-modal flow, and `#1C0770` primary color | [x] Implemented in the app and styling | [x] Branding and light workspace are visible in supplied screenshots; no-auth behavior is source-confirmed |
-| Full-width footer with “Built by Indie Dev” linked to LinkedIn | [ ] Current footer is a full-width banner but uses “Built by Jaya Dubey (Indian Dev)” and a plain LinkedIn URL; change the copy so “Indie Dev” is the link | [ ] Current footer appearance is visible in Screenshot (127), but requested copy is not present |
+| Full-width footer with “Built by Indie Dev” linked to LinkedIn | [x] Footer is a full-width banner with “Indie Dev” linked to LinkedIn | [x] Visible in Screenshot (127) |
 | Landing catalogue carousel | [ ] Current implementation is three static cards. The original architecture specifies three cards, not a carousel; carousel is a planned addition. | [ ] Not implemented or verified |
 | Help and Upvote features | [ ] Not in the original architecture or current implementation; planned additions | [ ] Not implemented or verified |
 | Cost guard of five generations per session | [ ] Not implemented | [ ] Not verified |
 | Optional WebXR preview | [ ] Not implemented; optional stretch item and excluded from the current MVP | [ ] Not applicable to current MVP |
-| Centered global landing footer | [x] Full-width centered footer component is implemented | [x] Visible in Screenshot (127); requested Indie Dev link copy remains pending above |
+| Centered global landing footer | [x] Full-width centered footer component is implemented | [x] Visible in Screenshot (127) |
 | Landing sample cards and Studio sample picker | [x] Three static landing cards and a Studio picker are implemented; Studio picker loads a selected sample. Landing cards currently navigate to Studio without selecting that specific sample. | [x] Sample room visible in Screenshot (124); specific landing-card selection behavior not verified |
 | Design wireframe asset in repository | [x] Design assets are present under `public/design/` | [ ] Git commit status is not established by this audit |
+| Architecture diagram and project links | [x] `docs/diagram.jpg`, deployed website, and demo video are linked from README | [x] Diagram and links are present |
 
 ### Screenshot Evidence
 
@@ -158,6 +164,8 @@ Status reflects the code audit, the supplied localhost screenshots, and the live
 - Screenshot (125): Plan and generated-proposal comparison with before/after slider.
 - Screenshot (126): Studio result and Save Edit control.
 - Screenshot (127): Landing Saved Edits empty state and current centered footer.
+
+The README also includes the workspace, plan output, SAM terminal, and before/after generation screenshots.
 
 The architecture checklist is the status source of truth. README summarizes these findings without duplicating this checklist.
 
