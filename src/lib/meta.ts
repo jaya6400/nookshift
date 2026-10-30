@@ -7,7 +7,8 @@
  * Base: https://api.meta.ai/v1 (OpenAI-compatible)
  */
 
-import { parseImageStream, recordsOfKind } from "@meta-sam/parser";
+import { decodeMaskToRaster, parseImageStream, recordsOfKind } from "@meta-sam/parser";
+import sharp from "sharp";
 
 const BASE = process.env.MODEL_BASE_URL ?? "https://api.meta.ai/v1";
 const KEY = process.env.MODEL_API_KEY;
@@ -32,7 +33,7 @@ export type Plan = {
 export type SamResults = {
   connected: boolean;
   boxes: { label: string; x: number; y: number; width: number; height: number; box: [number, number, number, number]; confidence: number; estimated?: boolean }[];
-  masks: { label: string; x: number; y: number; data: string }[];
+  masks: { label: string; x: number; y: number; width: number; height: number; bounds?: [number, number, number, number]; data: string }[];
   objects: { label: string; box: [number, number, number, number] | null; confidence: number }[];
   rawEmpty?: boolean;
 };
@@ -141,11 +142,13 @@ export async function callSam(
         label: targetLabel,
         x: Number(match[1]),
         y: Number(match[2]),
+        width: 0,
+        height: 0,
         data: match[3],
       }));
       lastMasks = masks;
 
-      if (!boxes.length && outputText.trim()) {
+      if (outputText.trim()) {
         try {
           const responseTextEvent = {
             type: "response.output_text.done" as const,
@@ -170,17 +173,24 @@ export async function callSam(
             ...boxRecords.map((record) => ({ left: record.left, top: record.top, right: record.right, bottom: record.bottom, confidence: record.confidence ?? 0.8 })),
             ...maskRecords.filter((mask) => !boxRecords.some((box) => box.objectId === mask.objectId)).map((mask) => ({ ...mask.bounds, confidence: mask.confidence ?? 0.8 })),
           ];
-          boxes.push(...bounds.map((bound) => {
+          if (!boxes.length) boxes.push(...bounds.map((bound) => {
             const x1 = bound.left / sourceWidth * 1000;
             const y1 = bound.top / sourceHeight * 1000;
             const x2 = bound.right / sourceWidth * 1000;
             const y2 = bound.bottom / sourceHeight * 1000;
             return { label: targetLabel, x: x1, y: y1, width: x2 - x1, height: y2 - y1, box: [x1, y1, x2, y2] as [number, number, number, number], confidence: bound.confidence };
           }).filter((box) => box.width > 0 && box.height > 0));
-          if (!masks.length) {
-            masks.push(...maskRecords.map((record) => ({ label: targetLabel, x: record.bounds.left, y: record.bounds.top, data: record.mask.payload })));
-            lastMasks = masks;
-          }
+          masks.length = 0;
+          masks.push(...maskRecords.map((record) => ({
+            label: targetLabel,
+            x: record.bounds.left,
+            y: record.bounds.top,
+            width: record.mask.width,
+            height: record.mask.height,
+            bounds: [record.bounds.left, record.bounds.top, record.bounds.right, record.bounds.bottom] as [number, number, number, number],
+            data: Buffer.from(decodeMaskToRaster(record.mask)).toString("base64"),
+          })));
+          lastMasks = masks;
         } catch (parseError) {
           console.warn(`SAM structural parser failed for target "${targetLabel}"`, parseError);
         }
@@ -416,66 +426,121 @@ async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   return (await fetch(dataUrl)).blob();
 }
 
-/**
- * Render the proposal. When the original room photo is available we use
- * /images/edits so the proposal stays grounded in the user's actual room;
- * otherwise we fall back to /images/generations from prompt alone.
- */
+/** Render an edit grounded in the user's original room photo. */
 export async function callImage(
   prompt: string,
-  imageBase64?: string | null
+  imageBase64?: string | null,
+  imageSize?: { width: number; height: number },
 ): Promise<string | null> {
   if (!KEY) return null;
+  if (!imageBase64) throw new Error("Image editing requires the original room image.");
 
-  if (imageBase64) {
-    const form = new FormData();
-    form.append("model", IMAGE_MODEL);
-    form.append("prompt", prompt);
-    form.append("n", "1");
-    form.append("image", await dataUrlToBlob(imageBase64), "room.webp");
-    const res = await fetch(`${BASE}/images/edits`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KEY}` }, // no Content-Type — browser sets the boundary
-      body: form,
-    });
-    if (!res.ok) throw new Error(`Image edits ${res.status}: ${await res.text()}`);
-    return extractImage(await res.json());
+  const form = new FormData();
+  form.append("model", IMAGE_MODEL);
+  form.append("prompt", prompt);
+  form.append("n", "1");
+  form.append("image", await dataUrlToBlob(imageBase64), "room.webp");
+  if (imageSize && imageSize.width > 0 && imageSize.height > 0) {
+    form.append("size", `${imageSize.width}x${imageSize.height}`);
+  }
+  const res = await fetch(`${BASE}/images/edits`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${KEY}` },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`Image edits ${res.status}: ${await res.text()}`);
+  return extractImage(await res.json());
+}
+
+/** Preserve every source pixel outside the requested recolor surface masks. */
+export async function preservePixelsOutsideMasks(
+  originalBase64: string,
+  proposalUrl: string,
+  masks: SamResults["masks"],
+  allowedTargets: string[],
+  excludedTargets: string[] = [],
+): Promise<string> {
+  const allowed = allowedTargets.map(normalizeLabel);
+  const excluded = excludedTargets.map(normalizeLabel);
+  const matchesTarget = (mask: SamResults["masks"][number], names: string[]) => {
+    const target = normalizeLabel(mask.label);
+    return names.some((name) => target === name || target.includes(name) || name.includes(target));
+  };
+  const selectedMasks = masks.filter((mask) => matchesTarget(mask, allowed));
+  const excludedMasks = masks.filter((mask) => matchesTarget(mask, excluded));
+  const missingTargets = allowed.filter((target) => !selectedMasks.some((mask) => matchesTarget(mask, [target])));
+  if (missingTargets.length) {
+    throw new Error(`SAM masks unavailable for recolor target(s): ${missingTargets.join(", ")}`);
   }
 
-  const res = await fetch(`${BASE}/images/generations`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: IMAGE_MODEL, prompt, n: 1 }),
-  });
-  if (!res.ok) throw new Error(`Image generations ${res.status}: ${await res.text()}`);
-  return extractImage(await res.json());
+  const original = Buffer.from(originalBase64.split(",").at(-1) ?? "", "base64");
+  const proposalSource = proposalUrl.startsWith("data:")
+    ? Buffer.from(proposalUrl.split(",").at(-1) ?? "", "base64")
+    : Buffer.from(await (await fetch(proposalUrl)).arrayBuffer());
+  const originalImage = sharp(original).removeAlpha().toColourspace("srgb");
+  const { data: originalPixels, info } = await originalImage.raw().toBuffer({ resolveWithObject: true });
+  const proposalPixels = await sharp(proposalSource).resize(info.width, info.height, { fit: "fill" }).removeAlpha().toColourspace("srgb").raw().toBuffer();
+  const allowedPixels = Buffer.alloc(info.width * info.height, 0);
+
+  const rasterize = (mask: SamResults["masks"][number], target: Buffer, value: number) => {
+    if (!mask.bounds || mask.width <= 0 || mask.height <= 0) return;
+    const [left, top, right, bottom] = mask.bounds;
+    const raster = Buffer.from(mask.data, "base64");
+    if (raster.length !== mask.width * mask.height) return;
+    let activePixels = 0;
+    for (let y = 0; y < mask.height; y += 1) {
+      const targetY = Math.floor(top + ((y + 0.5) * (bottom - top)) / mask.height);
+      if (targetY < 0 || targetY >= info.height) continue;
+      for (let x = 0; x < mask.width; x += 1) {
+        if (!raster[y * mask.width + x]) continue;
+        activePixels += 1;
+        const targetX = Math.floor(left + ((x + 0.5) * (right - left)) / mask.width);
+        if (targetX >= 0 && targetX < info.width) target[targetY * info.width + targetX] = value;
+      }
+    }
+    console.log("SAM composite mask", mask.label, mask.width, mask.height, mask.bounds, "active", activePixels);
+  };
+  for (const mask of selectedMasks) rasterize(mask, allowedPixels, 255);
+  for (const mask of excludedMasks) rasterize(mask, allowedPixels, 0);
+  console.log("SAM composite coverage", allowedPixels.reduce((sum, pixel) => sum + (pixel ? 1 : 0), 0), "of", allowedPixels.length);
+
+  for (let pixel = 0; pixel < allowedPixels.length; pixel += 1) {
+    if (allowedPixels[pixel]) continue;
+    const channel = pixel * info.channels;
+    proposalPixels[channel] = originalPixels[channel];
+    proposalPixels[channel + 1] = originalPixels[channel + 1];
+    proposalPixels[channel + 2] = originalPixels[channel + 2];
+  }
+
+  const composited = await sharp(proposalPixels, {
+    raw: { width: info.width, height: info.height, channels: info.channels },
+  }).png().toBuffer();
+  return `data:image/png;base64,${composited.toString("base64")}`;
 }
 
 /** Turn a Spark plan into an image-edit prompt. */
 export function planToPrompt(plan: Plan, userText: string): string {
-  const ops = plan.operations
+  const changes = plan.operations
     .map((op) => {
       if (op.action === "swap") {
         const targets = op.target.split(/\s+(?:and|with)\s+|\s*<->\s*/i).map((target) => target.trim()).filter(Boolean);
-        return `swap positions of ${targets.join(" and ")}, preserving each existing item and not creating duplicates`;
+        return `Swap the positions of the existing ${targets.join(" and ")}`;
       }
-      const v = op.value ? ` (${op.value})` : "";
-      return `${op.action}: ${op.target}${v}`;
+      if (op.action === "recolor") return `Recolor ${op.target} ${op.value ?? "as requested"}`;
+      if (op.action === "remove") return `Remove ${op.target}`;
+      if (op.action === "reposition") return `Reposition the existing ${op.target}${op.value ? ` ${op.value}` : ""}`;
+      if (op.action === "keep") return `Keep the existing ${op.target}`;
+      return `Change ${op.target}${op.value ? ` to ${op.value}` : ""}`;
     })
-    .join("; ");
-  const sofaGuard = /sofa|two.seater|mandir|fridge/i.test(`${plan.goal} ${userText}`)
-    ? "Do not add new sofas, chairs, or furniture. Only move the existing two-seater slightly to the right when requested. Keep the mandir, fridge, bed, and windows unchanged."
-    : "Do not add new furniture or duplicate existing objects unless explicitly requested.";
+    .join(", ");
+  const constraints = plan.constraints.length
+    ? `Constraints: ${plan.constraints.join("; ")}.`
+    : "";
   return [
-    `Renter-friendly redesign. Goal: ${plan.goal}.`,
-    `Requested by user: "${userText}".`,
-    `Changes: ${ops}.`,
-    "Keep the same camera angle, walls, floor, window and lighting.",
-    "Do not add unrequested furniture, duplicate objects, or change the room layout.",
-    sofaGuard,
-    "Photorealistic interior design proposal, no structural changes.",
-  ].join(" ");
+    changes || userText || plan.goal,
+    constraints,
+    "Keep existing room layout, camera angle, windows, and other furniture unchanged.",
+    "Do not add new furniture unless explicitly requested.",
+    "High detail, 8k, real interior photo, no CGI.",
+  ].filter(Boolean).join(" ");
 }

@@ -64,7 +64,6 @@ export function BeforeAfterSlider({
         src={after}
         alt="After proposal"
         className="block w-full"
-        style={{ filter: "saturate(1.35) brightness(1.07) hue-rotate(-8deg)" }}
         draggable={false}
       />
       {/* Before (clipped overlay) */}

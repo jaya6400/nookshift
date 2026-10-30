@@ -27,7 +27,7 @@ type Phase = "idle" | "loading" | "result";
 type Step = "spark" | "image" | "refine";
 
 type ViewStatus = "idle" | "loading" | "success" | "error";
-type StudioView = { id: string; image: string; label: string; status: ViewStatus; result?: PerViewResult; plan?: Plan };
+type StudioView = { id: string; image: string; width: number; height: number; label: string; status: ViewStatus; result?: PerViewResult; plan?: Plan };
 type BatchResponse = { plan: Plan; results: PerViewResult[]; error?: string };
 
 type SpeechResultEvent = {
@@ -51,8 +51,8 @@ type SpeechWindow = Window & {
   webkitSpeechRecognition?: new () => SpeechRecognitionLike;
 };
 
-/** Compress an image source to WebP under 800 KB at a 1024px longest edge. */
-async function toCompressedDataUrl(src: string): Promise<string> {
+/** Compress an image source to WebP under 2 MB at a 1024px longest edge. */
+async function toCompressedDataUrl(src: string): Promise<{ dataUrl: string; width: number; height: number }> {
   const blob = await (await fetch(src)).blob();
   const url = URL.createObjectURL(blob);
   let img: HTMLImageElement;
@@ -74,19 +74,18 @@ async function toCompressedDataUrl(src: string): Promise<string> {
   canvas.height = Math.round(img.height * scale);
   canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
   URL.revokeObjectURL(url);
-  const maxBytes = 800 * 1024;
-  for (let quality = 0.86; quality >= 0.2; quality -= 0.08) {
-    const compressed = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
-    if (compressed && compressed.size < maxBytes) {
-      return await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = reject;
-        reader.readAsDataURL(compressed);
-      });
-    }
+  const maxBytes = 2 * 1024 * 1024;
+  const compressed = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.85));
+  if (!compressed || compressed.size >= maxBytes) {
+    throw new Error("Image could not be compressed below 2 MB at quality 0.85.");
   }
-  throw new Error("Image could not be compressed below 800 KB.");
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(compressed);
+  });
+  return { dataUrl, width: canvas.width, height: canvas.height };
 }
 
 export default function StudioPage() {
@@ -140,9 +139,12 @@ export default function StudioPage() {
     setUploadError("");
     const convertedResults = await Promise.all(accepted.map(async (file) => {
       try {
+        const compressed = await toCompressedDataUrl(URL.createObjectURL(file));
         return {
           id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-          image: await toCompressedDataUrl(URL.createObjectURL(file)),
+          image: compressed.dataUrl,
+          width: compressed.width,
+          height: compressed.height,
           label: file.name,
           status: "idle" as const,
         };
@@ -151,7 +153,7 @@ export default function StudioPage() {
       }
     }));
     const converted = convertedResults.filter((view): view is NonNullable<typeof view> => view !== null);
-    if (converted.length !== accepted.length) setUploadError("Some images could not be compressed below 800 KB and were not added.");
+    if (converted.length !== accepted.length) setUploadError("Some images could not be compressed below 2 MB at quality 0.85 and were not added.");
     setImages((current) => {
       const combined = [...current, ...converted];
       const wideIndex = combined.findIndex((view) => view.label.toLowerCase().includes("full-mandir-hall-room"));
@@ -170,12 +172,17 @@ export default function StudioPage() {
     setGenerationError("");
     setUploadError("");
     const sampleImages = sample.isRealRoom && sample.images?.length ? sample.images : [sample.src];
-    const converted = await Promise.all(sampleImages.slice(0, 3).map(async (src, index) => ({
-      id: `${sample.id}-${index}`,
-      image: await toCompressedDataUrl(src),
-      label: src.split("/").at(-1) ?? `View ${index + 1}`,
-      status: "idle" as const,
-    })));
+    const converted = await Promise.all(sampleImages.slice(0, 3).map(async (src, index) => {
+      const compressed = await toCompressedDataUrl(src);
+      return {
+        id: `${sample.id}-${index}`,
+        image: compressed.dataUrl,
+        width: compressed.width,
+        height: compressed.height,
+        label: src.split("/").at(-1) ?? `View ${index + 1}`,
+        status: "idle" as const,
+      };
+    }));
     setImages(converted);
     setActiveIndex(0);
   }, []);
@@ -253,7 +260,11 @@ export default function StudioPage() {
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images: images.map((view) => view.image), text }),
+        body: JSON.stringify({
+          images: images.map((view) => view.image),
+          imageSizes: images.map(({ width, height }) => ({ width, height })),
+          text,
+        }),
       });
       const data = (await res.json()) as BatchResponse;
       if (!res.ok) throw new Error(data.error ?? "Planning request failed.");
@@ -288,7 +299,13 @@ export default function StudioPage() {
       const response = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images: [view.image], text, existingPlan: plan, index }),
+        body: JSON.stringify({
+          images: [view.image],
+          imageSizes: [{ width: view.width, height: view.height }],
+          text,
+          existingPlan: plan,
+          index,
+        }),
       });
       const data = (await response.json()) as BatchResponse;
       if (!response.ok) throw new Error(data.error ?? "Retry failed.");
@@ -384,6 +401,7 @@ export default function StudioPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           images: [activeView.image],
+          imageSizes: [{ width: activeView.width, height: activeView.height }],
           originalImages: images.map((view) => view.image),
           text: editedPrompt,
           existingPlan: activePlan,

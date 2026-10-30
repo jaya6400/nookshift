@@ -6,6 +6,7 @@ import {
   detectObjectsForImage,
   filterOpsForView,
   planToPrompt,
+  preservePixelsOutsideMasks,
   MOCK_PLAN,
   type Plan,
   type Operation,
@@ -25,7 +26,7 @@ export const maxDuration = 60;
  * Image failure is non-fatal (proposalUrl: null, client shows stylized preview).
  */
 export async function POST(req: Request) {
-  let body: { image?: string; imageBase64?: string; images?: string[]; originalImages?: string[]; text?: string; operations?: Operation[]; isEdit?: boolean; isRefine?: boolean; existingPlan?: Plan; index?: number };
+  let body: { image?: string; imageBase64?: string; images?: string[]; imageSizes?: { width: number; height: number }[]; originalImages?: string[]; text?: string; operations?: Operation[]; isEdit?: boolean; isRefine?: boolean; existingPlan?: Plan; index?: number };
   try {
     body = await req.json();
   } catch {
@@ -80,12 +81,12 @@ export async function POST(req: Request) {
     console.log("SAM env check", !!process.env.MODEL_API_KEY, process.env.MODEL_BASE_URL || "https://api.meta.ai/v1", process.env.SAM_MODEL || "sam-3.1");
     const operationTargets = plan.operations.map((operation) => operation.target);
 
-    const processView = async (imageBase64: string, resultIndex: number) => {
+    const processView = async (originalBase64: string, resultIndex: number, imageSize?: { width: number; height: number }) => {
       let samResults: SamResults | null = null;
       let proposalUrl: string | null = null;
       let error: string | undefined;
       try {
-        samResults = await detectObjectsForImage(imageBase64, operationTargets, resultIndex);
+        samResults = await detectObjectsForImage(originalBase64, operationTargets, resultIndex);
       } catch (err) {
         error = err instanceof Error ? err.message : "SAM analysis failed for this view.";
       }
@@ -97,9 +98,25 @@ export async function POST(req: Request) {
       });
       const viewPlan: Plan = { ...plan, operations: applied };
       try {
-        proposalUrl = await callImage(planToPrompt(viewPlan, text), imageBase64);
+        proposalUrl = await callImage(planToPrompt(viewPlan, text), originalBase64, imageSize);
+        if (
+          proposalUrl &&
+          applied.length > 0 &&
+          applied.every((operation) => operation.action === "recolor")
+        ) {
+          proposalUrl = await preservePixelsOutsideMasks(
+            originalBase64,
+            proposalUrl,
+            samResults?.masks ?? [],
+            applied.map((operation) => operation.target),
+            (samResults?.objects ?? [])
+              .filter((object) => !applied.some((operation) => operation.target.toLowerCase() === object.label.toLowerCase()))
+              .map((object) => object.label),
+          );
+        }
         if (!proposalUrl) error ??= "Proposal generation returned no image for this view.";
       } catch (err) {
+        proposalUrl = null;
         error = err instanceof Error ? err.message : "Proposal generation failed for this view.";
       }
       return { index: resultIndex, proposalUrl, samResults, appliedOperations: applied, skippedOperations: skipped, ...(error ? { error } : {}) };
@@ -108,8 +125,8 @@ export async function POST(req: Request) {
     const sourceImage = body.isRefine ? body.originalImages![index] : images[0];
     if (body.isRefine) console.log("Refine using original image, not generated, for index", index);
     const results = isRetry || body.isRefine
-      ? [await processView(sourceImage, index)]
-      : await Promise.all(images.map((image, resultIndex) => processView(image, resultIndex)));
+      ? [await processView(sourceImage, index, body.imageSizes?.[index])]
+      : await Promise.all(images.map((image, resultIndex) => processView(image, resultIndex, body.imageSizes?.[resultIndex])));
     return NextResponse.json({ plan, results });
   }
 
@@ -142,7 +159,7 @@ export async function POST(req: Request) {
     // Image — failure must not kill the plan.
     let proposalUrl: string | null = null;
     try {
-      proposalUrl = await callImage(planToPrompt(plan, text), imageBase64);
+      proposalUrl = await callImage(planToPrompt(plan, text), imageBase64, body.imageSizes?.[0]);
     } catch (err) {
       console.error("Image generation failed:", err);
     }
