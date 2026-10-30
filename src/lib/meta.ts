@@ -364,6 +364,22 @@ export async function detectObjectsForImage(
     console.warn("SAM target failed", target, error instanceof Error ? error.message : error);
     return { connected: true, boxes: [], masks: [], objects: [{ label: target, box: null, confidence: 0 }], rawEmpty: true } satisfies SamResults;
   })));
+  const wallTargetsWithoutMasks = targets.filter((target) =>
+    /\b(walls?|ceiling|floor)\b/i.test(target) &&
+    !samByTarget[targets.indexOf(target)]?.masks.length
+  );
+  if (wallTargetsWithoutMasks.length) {
+    const retried = await Promise.all(wallTargetsWithoutMasks.map((target) =>
+      callSam(imageBase64, target, sparkObjects.map((object) => object.label)).catch((error) => {
+        console.warn("SAM surface retry failed", target, error instanceof Error ? error.message : error);
+        return null;
+      })
+    ));
+    for (let retryIndex = 0; retryIndex < wallTargetsWithoutMasks.length; retryIndex += 1) {
+      const targetIndex = targets.indexOf(wallTargetsWithoutMasks[retryIndex]);
+      if (retried[retryIndex]?.masks.length) samByTarget[targetIndex] = retried[retryIndex]!;
+    }
+  }
   const boxes = samByTarget.flatMap((result) => result.boxes);
   const masks = samByTarget.flatMap((result) => result.masks);
   const objects = Array.from(new Map([
@@ -384,10 +400,25 @@ function normalizeLabel(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 }
 
-/** Keep global surface changes and object actions whose targets are visible in this image. */
-export function filterOpsForView(operations: Operation[], samResults: SamResults): { applied: Operation[]; skipped: Operation[] } {
+/** Keep surface edits with masks and object actions whose targets are visible in this image. */
+export function filterOpsForView(operations: Operation[], samResults: SamResults, imageWidth?: number): { applied: Operation[]; skipped: Operation[] } {
   const labels = samResults.objects.map((object) => normalizeLabel(object.label));
   const globalSurface = /\b(walls?|ceiling|floor)\b/i;
+  const hasSurfaceMask = (target: string) => {
+    const normalized = normalizeLabel(target);
+    const genericWall = /^walls?$/.test(normalized);
+    return samResults.masks.some((mask) => {
+      const label = normalizeLabel(mask.label);
+      if (imageWidth && mask.bounds && /\b(left|right)\s+walls?\b/.test(normalized)) {
+        const [left, , right] = mask.bounds;
+        const centerX = (left + right) / 2;
+        const isLeftTarget = normalized.startsWith("left ");
+        return isLeftTarget ? centerX < imageWidth / 2 : centerX >= imageWidth / 2;
+      }
+      if (label === normalized || label.includes(normalized) || normalized.includes(label)) return true;
+      return genericWall && /\bwalls?\b/.test(label);
+    });
+  };
   const isVisibleTarget = (target: string) => {
     const normalized = normalizeLabel(target);
     const targetHasSofa = /\bsofa\b/.test(normalized);
@@ -409,7 +440,9 @@ export function filterOpsForView(operations: Operation[], samResults: SamResults
       : [operation.target];
     const globalRecolor = operation.action === "recolor" && globalSurface.test(operation.target);
     const objectPresenceFiltered = operation.action === "reposition" || operation.action === "swap";
-    const visible = globalRecolor || !objectPresenceFiltered || parts.every(isVisibleTarget);
+    const visible = globalRecolor
+      ? hasSurfaceMask(operation.target)
+      : !objectPresenceFiltered || parts.every(isVisibleTarget);
     (visible ? applied : skipped).push(operation);
   }
   return { applied, skipped };
@@ -458,16 +491,13 @@ export async function preservePixelsOutsideMasks(
   proposalUrl: string,
   masks: SamResults["masks"],
   allowedTargets: string[],
-  excludedTargets: string[] = [],
 ): Promise<string> {
   const allowed = allowedTargets.map(normalizeLabel);
-  const excluded = excludedTargets.map(normalizeLabel);
   const matchesTarget = (mask: SamResults["masks"][number], names: string[]) => {
     const target = normalizeLabel(mask.label);
     return names.some((name) => target === name || target.includes(name) || name.includes(target));
   };
   const selectedMasks = masks.filter((mask) => matchesTarget(mask, allowed));
-  const excludedMasks = masks.filter((mask) => matchesTarget(mask, excluded));
   const missingTargets = allowed.filter((target) => !selectedMasks.some((mask) => matchesTarget(mask, [target])));
   if (missingTargets.length) {
     throw new Error(`SAM masks unavailable for recolor target(s): ${missingTargets.join(", ")}`);
@@ -501,7 +531,6 @@ export async function preservePixelsOutsideMasks(
     console.log("SAM composite mask", mask.label, mask.width, mask.height, mask.bounds, "active", activePixels);
   };
   for (const mask of selectedMasks) rasterize(mask, allowedPixels, 255);
-  for (const mask of excludedMasks) rasterize(mask, allowedPixels, 0);
   console.log("SAM composite coverage", allowedPixels.reduce((sum, pixel) => sum + (pixel ? 1 : 0), 0), "of", allowedPixels.length);
 
   for (let pixel = 0; pixel < allowedPixels.length; pixel += 1) {
