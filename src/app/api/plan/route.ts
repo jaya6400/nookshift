@@ -95,8 +95,18 @@ export async function POST(req: Request) {
         boxes: [],
         masks: [],
         objects: [],
-      });
+      }, imageSize?.width);
       const viewPlan: Plan = { ...plan, operations: applied };
+      if (!applied.length) {
+        return {
+          index: resultIndex,
+          proposalUrl: null,
+          samResults,
+          appliedOperations: applied,
+          skippedOperations: skipped,
+          error: "No requested surfaces or objects were detected in this view.",
+        };
+      }
       try {
         proposalUrl = await callImage(planToPrompt(viewPlan, text), originalBase64, imageSize);
         if (
@@ -109,9 +119,6 @@ export async function POST(req: Request) {
             proposalUrl,
             samResults?.masks ?? [],
             applied.map((operation) => operation.target),
-            (samResults?.objects ?? [])
-              .filter((object) => !applied.some((operation) => operation.target.toLowerCase() === object.label.toLowerCase()))
-              .map((object) => object.label),
           );
         }
         if (!proposalUrl) error ??= "Proposal generation returned no image for this view.";
@@ -125,7 +132,7 @@ export async function POST(req: Request) {
     const sourceImage = body.isRefine ? body.originalImages![index] : images[0];
     if (body.isRefine) console.log("Refine using original image, not generated, for index", index);
     const results = isRetry || body.isRefine
-      ? [await processView(sourceImage, index, body.imageSizes?.[index])]
+      ? [await processView(sourceImage, index, body.imageSizes?.[0])]
       : await Promise.all(images.map((image, resultIndex) => processView(image, resultIndex, body.imageSizes?.[resultIndex])));
     return NextResponse.json({ plan, results });
   }
