@@ -98,6 +98,7 @@ See [NookShift Architecture](docs/NookShift-Architecture.md) for the detailed fe
 - Wispr Flow and Visual Studio Code
 - Meta models: `muse-spark-1.3`, `sam-3.1`, and `muse-image-1.0`
 - Kimi for scaffolding
+- Copilot Agent(GPT 6 Luna)
 - Meta AI for brainstorming
 - ChatGPT for research
 - UI Wizard (Uizard) for wireframes
